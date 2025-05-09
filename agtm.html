@@ -6,6 +6,7 @@
 <script src="color-helpers/math-helpers.js"></script>
 <script src="color-helpers/color-functions.js"></script>
 <script src="color-helpers/piecewise-cubic.js"></script>
+<script src="color-helpers/bezier.js"></script>
 <script src="color-helpers/agtm-adapt.js"></script>
 <script src="color-helpers/agtm-tone-map-gl.js"></script>
 <script>
@@ -25,39 +26,13 @@ let getPercentile = function(p, bins) {
   return 0;
 }
 
-let evalBezier = function(x, x_cp, y_cp) {
-  if (x > x_cp[2]) {
-    return x;
-  }
-  let a_x = x_cp[0] - 2*x_cp[1] + x_cp[2];
-  let b_x = 2*x_cp[1] - 2*x_cp[2];
-  let c_x = x_cp[2];
-  let a_y = y_cp[0] - 2*y_cp[1] + y_cp[2];
-  let b_y = 2*y_cp[1] - 2*y_cp[2];
-  let c_y = y_cp[2];
-  let d = Math.sqrt(b_x*b_x - 4 * a_x * (c_x - x));
-  let t = (-b_x - d) / (2*a_x)
-  return a_y*t*t + b_y*t + c_y;
-}
-
-let evalWhiteSurroundCurve = function(x, metadata) {
-  let wst = metadata.white_surround_transform;
-  if (wst) {
-    return evalBezier(x, [0, wst.x1, wst.x2], [0, wst.y1, wst.x2]);
-  }
-  return x;
-}
-
-let evalWhiteSurroundCurveInverse = function(y, metadata) {
-  let wst = metadata.white_surround_transform;
-  if (wst) {
-    return evalBezier(y, [0, wst.y1, wst.x2], [0, wst.x1, wst.x2]);
-  }
-  return y;
-}
-
 let linearToExtended = function(linear, metadata) {
   return linear / metadata.hdr_reference_white;
+}
+
+let getWstFunction = function(metadata) {
+  return new Bezier(WhiteSurroundTransform.checked ?
+                    metadata.white_surround_transform : null);
 }
 
 let onMetadataChanged = function() {
@@ -70,6 +45,11 @@ let onMetadataChanged = function() {
         .replace(/("x": )([^m]+)/g,
                  (_, a, b) => a + b.replace(/\s+/g, ' '));
   MetadataJSON.value = json;
+
+  if (image_bitmap_stats) {
+    curve_editor.setGainCurveMixHistogram(
+        image_bitmap_stats.getDistribution(metadata));
+  }
 }
 
 let logGainToLinearGrad = function(p) {
@@ -93,6 +73,7 @@ let linearToLogGain = function(p_linear) {
 
 let image_bitmap = null;
 let image_bitmap_source = null;
+let image_bitmap_stats = null;
 var hdr_preview = null;
 let curve_editor = null;
 
@@ -108,7 +89,7 @@ class ImageStats {
     gl.getExtension('EXT_color_buffer_float');
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA, gl.YES);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, gl.TRUE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, this.width, this.height, 0, gl.RGBA, gl.FLOAT, null);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, gl.RGBA, gl.FLOAT, video);
     gl.generateMipmap(gl.TEXTURE_2D);
@@ -130,6 +111,8 @@ class ImageStats {
     let toRelativeLinear = function(data_encoded, metadata) {
       const N = data_encoded.length / 4;
       let result = new Float32Array(data_encoded.length);
+      let wst = getWstFunction(metadata);
+      console.log('Wst: 0.01:' + wst.evaluate(0.01));
       for (let i = 0; i < N; ++i) {
         const offset = 4*i;
         let rgb = [data_encoded[offset+0],
@@ -153,7 +136,7 @@ class ImageStats {
           }
         }
         for (let c = 0; c < 3; ++c) {
-          rgb[c] = evalWhiteSurroundCurve(rgb[c], metadata);
+          rgb[c] = wst.evaluate(rgb[c]);
         }
         for (let c = 0; c < 3; ++c) {
           result[offset+c] = rgb[c];
@@ -433,13 +416,13 @@ class CurveEditor {
     {
       let p = this.linearToView({x:1, y:0});
       let text = this.metadata.hdr_reference_white + ' nits';
+      let wst = getWstFunction(metadata);
 
       this.context.fillText(text, p.x - 20, p.y + 40);
       if (p.x > this.canvas.width / 2) {
         let drawNits = function(tt, nits) {
           let x = nits / tt.metadata.hdr_reference_white;
-          console.log('nits:' + nits + ', x:' + x + ' eval:' + evalWhiteSurroundCurve(x, metadata));
-          x = evalWhiteSurroundCurve(x, metadata);
+          x = wst.evaluate(x);
           let p = tt.linearToView({x:x, y:0});
           text = nits + ' nits';
           tt.context.fillText(text, p.x, p.y + 40);
@@ -751,6 +734,9 @@ const fs = `#version 300 es
   uniform int framebuffer_trfn;
   uniform int framebuffer_primaries;
   uniform int white_surround;
+  uniform float wst_x1;
+  uniform float wst_y1;
+  uniform float wst_x2;
   in vec2 texcoord;
   out vec4 fragColor;
 
@@ -783,6 +769,27 @@ const fs = `#version 300 es
     return rgb;
   }
 
+  float EvaluateWst(float x) {
+    float x0 = 0.0;
+    float y0 = x0;
+    float x1 = wst_x1;
+    float y1 = wst_y1;
+    float x2 = wst_x2;
+    float y2 = x2;
+    if (x > x2) {
+      return x;
+    }
+    float a_x = x0 - 2.0*x1 + x2;
+    float b_x = 2.0*x1 - 2.0*x2;
+    float c_x = x2;
+    float a_y = y0 - 2.0*y1 + y2;
+    float b_y = 2.0*y1 - 2.0*y2;
+    float c_y = y2;
+    float d = sqrt(b_x*b_x - 4.0 * a_x * (c_x - x));
+    float t = (-b_x - d) / (2.0*a_x);
+    return a_y*t*t + b_y*t + c_y;
+  }
+
   void main() {
     fragColor.a = 1.0;
 
@@ -798,21 +805,13 @@ const fs = `#version 300 es
       rgb *= 10000.0 / hdr_reference_white;
     }
 
-    /*
-    for (int c = 0; c < 3; ++c) {
-      if (rgb[c] < 1.0) {
-        rgb[c] = EvaluateCurveTex(rgb[c], kCurveCount-2.0);
-      }
-    }
-
-    if (white_surround == 0) {
+    if (white_surround == 1) {
       for (int c = 0; c < 3; ++c) {
         if (rgb[c] < 1.0) {
-          rgb[c] = EvaluateCurveTex(rgb[c], kCurveCount-1.0);
+          rgb[c] = EvaluateWst(rgb[c]);
         }
       }
     }
-    */
 
     // Convert to gain application color space.
     rgb = primariesConvert(rgb, texture_primaries, gain_application_space_primaries);
@@ -934,7 +933,6 @@ class AdaptiveGtmRenderer {
       this.framebuffer_primaries = kPrimariesSRGB;
     }
 
-
     let warningsText = '';
     let v = browserVersion();
     if (v[0] == 'Chrome' && v[1] < 131) {
@@ -1037,10 +1035,18 @@ class AdaptiveGtmRenderer {
                  contentPrimaries);
     gl.uniform1i(gl.getUniformLocation(this.program, 'white_surround'),
                  WhiteSurroundTransform.checked);
+    if (WhiteSurroundTransform.checked) {
+      gl.uniform1f(gl.getUniformLocation(this.program, 'wst_x1'),
+                   this.metadata.white_surround_transform.x1);
+      gl.uniform1f(gl.getUniformLocation(this.program, 'wst_y1'),
+                   this.metadata.white_surround_transform.y1);
+      gl.uniform1f(gl.getUniformLocation(this.program, 'wst_x2'),
+                   this.metadata.white_surround_transform.x2);
+    }
     gl.uniform1f(gl.getUniformLocation(this.program, 'hdr_reference_white'),
                  this.metadata.hdr_reference_white);
 
-    this.agtm.setUniforms(this.framebuffer_log2_headroom, this.program, 1);
+    this.agtm.setUniforms(this.framebuffer_log2_headroom, this.program, 2);
  
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
   }
@@ -1120,6 +1126,11 @@ let onImageBitmapSource = function(source, w, h) {
       image_bitmap.close();
     }
     image_bitmap = new_image_bitmap;
+    if (image_bitmap_stats) {
+      image_bitmap_stats = new ImageStats(image_bitmap);
+      curve_editor.setGainCurveMixHistogram(
+          image_bitmap_stats.getDistribution(metadata));
+    }
     resize();
 
     hdr_preview.setImage(image_bitmap);
@@ -1260,10 +1271,11 @@ let main = function() {
   });
   ComputeStats.addEventListener('click', function(e) {
     if (ComputeStats.checked) {
-      let stats = new ImageStats(image_bitmap);
+      image_bitmap_stats = new ImageStats(image_bitmap);
       curve_editor.setGainCurveMixHistogram(
-          stats.getDistribution(metadata));
+          image_bitmap_stats.getDistribution(metadata));
     } else {
+      image_bitmap_stats = null;
       curve_editor.setGainCurveMixHistogram(null);
     }
   });
@@ -1341,6 +1353,7 @@ let main = function() {
   NativeRendering.addEventListener('change', function (e) { resize(); });
   
   WhiteSurroundTransform.addEventListener('change', function (e) {
+    onMetadataChanged();
     hdr_preview.draw();
   });
 
