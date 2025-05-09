@@ -70,12 +70,6 @@ let onMetadataChanged = function() {
         .replace(/("x": )([^m]+)/g,
                  (_, a, b) => a + b.replace(/\s+/g, ' '));
   MetadataJSON.value = json;
-
-  if (ComputeStats.checked) {
-    let stats = new ImageStats(image_bitmap);
-    curve_editor.setGainCurveMixHistogram(
-        stats.getDistribution(metadata));
-  }
 }
 
 let logGainToLinearGrad = function(p) {
@@ -1075,6 +1069,9 @@ let resize = function() {
   TimeSliderTable.hidden = image_bitmap_source != MyVideo;
 
   let width  = 0.48 * window.innerWidth;
+  if (Panel.hidden) {
+    width = 0.80 * window.innerWidth;
+  }
   let height = 0.80 * window.innerHeight;
 
   let aspect = 1280 / 720;
@@ -1103,6 +1100,7 @@ let resize = function() {
   s = 'width:' + Math.round(size) + 'px;' +
       'height:' + Math.round(size) + 'px;'
   CurveEditorCanvas.style = s;
+  MetadataJSON.style = s;
   if (curve_editor) {
     CurveEditorCanvas.width = 2*size;
     CurveEditorCanvas.height = 2*size;
@@ -1126,12 +1124,6 @@ let onImageBitmapSource = function(source, w, h) {
 
     hdr_preview.setImage(image_bitmap);
     hdr_preview.draw();
- 
-    if (ComputeStats.checked) {
-      let stats = new ImageStats(image_bitmap);
-      curve_editor.setGainCurveMixHistogram(
-          stats.getDistribution(metadata));
-    }
   });
 }
 
@@ -1229,6 +1221,12 @@ let main = function() {
   curve_editor.setPreviewHeadroom(Number(PreviewHdrHeadroomSlider.value));
 
 
+  PanelContent.addEventListener('change', function (e) {
+    Panel.hidden = PanelContent.value == 0;
+    Editor.hidden = PanelContent.value != 1;
+    MetadataJSON.hidden = PanelContent.value != 2;
+    resize();
+  });
   SignalTransfer.addEventListener('change', function (e) {
     contentTransfer = Number(SignalTransfer.value);
     onMetadataChanged();
@@ -1248,7 +1246,7 @@ let main = function() {
       fetchFile(b); 
     };
     if (Content.value == 0)
-      loadContent('demo.avif', 'demo.json', kTransferPQ, kPrimariesRec2020);
+      loadContent('cow.avif', 'demo.json', kTransferPQ, kPrimariesRec2020);
     if (Content.value == 1)
       loadContent('bmw-pq.png', 'demo.json', kTransferPQ, kPrimariesRec2020);
     if (Content.value == 2)
@@ -1379,7 +1377,7 @@ let main = function() {
     QueryScreen.addEventListener('click', screenDetails);
   }
 
-  fetchFile('demo.avif');
+  fetchFile('cow.avif');
   fetchFile('demo.json');
 }
 </script>
@@ -1390,7 +1388,7 @@ let main = function() {
 
 <table style="width:100%; text-align:center; border:1px;">
 <tr>
-  <td>
+  <td id="Preview" style="vertical-align:top;">
     <p style='text-align:center;'>
       <input  type="file"   id="UploadButton" style="display:none">
       <button type="button" id="UploadButtonFake">Upload Image</button>
@@ -1416,15 +1414,15 @@ let main = function() {
     <p id="PreviewHDRLabel">AdaptiveGTM HDR Preview</p>
     <canvas id="PreviewHDR" style="width:40%;"></canvas>
 
-<table id="TimeSliderTable">
-  <tr>
-    <td> <input style="width:65px;" id="TimeSliderValue" min="0" max="5" step=0.001" value="0"></input></td>
-    <td> <button id="PlayPause"> &#x23EF; </button> </td>
-    <td style="width:100%;">
-      <input id="TimeSlider" type="range" min="0" max="5" step="0.001" value="0" style="width:100%;"/><br>
-    </td>
-  <tr>
-</table>
+    <table id="TimeSliderTable">
+      <tr>
+        <td> <input style="width:65px;" id="TimeSliderValue" min="0" max="5" step=0.001" value="0"></input></td>
+        <td> <button id="PlayPause"> &#x23EF; </button> </td>
+        <td style="width:100%;">
+          <input id="TimeSlider" type="range" min="0" max="5" step="0.001" value="0" style="width:100%;"/><br>
+        </td>
+      <tr>
+    </table>
 
 
     <table style="table-layout: auto; width:100%">
@@ -1458,62 +1456,58 @@ let main = function() {
       </tr>
       <tr>
         <td  colspan="2">
+          <p>
           <label for="QueryScreen">Use display's HDR headroom:</label>
           <input type="checkbox" id="QueryScreen"></input>
-        </td>
-      </tr>
-      <tr>
-        <td  colspan="2">
-          <p>
           <label for="WhiteSurroundTransform">White surround:</label>
           <input type="checkbox" id="WhiteSurroundTransform"></input>
+          <label for="NativeRendering">Native rendering</label>
+          <input type="checkbox" id="NativeRendering"></input>
           </p>
-        </td>
-      </tr>
-      <tr>
-        <td  colspan="2">
           <p>
-            <label for="NativeRendering">Native rendering</label>
-            <input type="checkbox" id="NativeRendering"></input>
+          <label for="PanelContent">PanelContent:</label>
+          <select name="PanelContent" id="PanelContent">
+            <option value=0 checked>Nothing</option>
+            <option value=1>Editor</option>
+            <option value=2>JSON</option>
+          </select>
           </p>
         </td>
       </tr>
     </table>
-
   </td>
+  <td id="Panel" hidden>
+    <textarea id="MetadataJSON" style="width:100%;" rows=100 hidden></textarea>
+    <div id="Editor" hidden>
+      <canvas id="CurveEditorCanvas"></canvas>
+      <p>
+      <input type="radio" id="InputModeMoveXYM" name="input_mode" checked/>
+      <label for="InputModeMoveXYM">Move XY &#x21E7;M</label>
+      <input type="radio" id="InputModeMoveYM" name="input_mode"/>
+      <label for="InputModeMoveYM">Move Y,&#x21E7;M</label>
+      <input type="radio" id="InputModeAdd" name="input_mode"/>
+      <label for="InputModeAdd">Add</label>
+      <input type="radio" id="InputModeRemove" name="input_mode"/>
+      <label for="InputModeRemove">Remove</label>
+      </p>
+      <p>
+      <input id="AltrIndex" type="number" min="0" max="3" step="1" value="0"'/>
+      <label for="AltrIndex">Editor Altr</label>
 
-  <td>
+      <input id="LumSatSlider" type="range" min="0" max="1" step="0.001" value="1"/>
+      <label for="LumSatSlider">Lum-sat</label>
 
-          <canvas id="CurveEditorCanvas"></canvas>
-          <p>
-          <input type="radio" id="InputModeMoveXYM" name="input_mode" checked/>
-          <label for="InputModeMoveXYM">Move XY &#x21E7;M</label>
-          <input type="radio" id="InputModeMoveYM" name="input_mode"/>
-          <label for="InputModeMoveYM">Move Y,&#x21E7;M</label>
-          <input type="radio" id="InputModeAdd" name="input_mode"/>
-          <label for="InputModeAdd">Add</label>
-          <input type="radio" id="InputModeRemove" name="input_mode"/>
-          <label for="InputModeRemove">Remove</label>
-          </p>
-          <p>
-          <input id="AltrIndex" type="number" min="0" max="3" step="1" value="0"'/>
-          <label for="AltrIndex">Editor Altr</label>
+      <input type="checkbox" id="ComputeStats"></input>
+      <label for="ComputeStats">Histogram</label>
+      </p>
 
-          <input id="LumSatSlider" type="range" min="0" max="1" step="0.001" value="1"/>
-          <label for="LumSatSlider">Lum-sat</label>
-
-          <input type="checkbox" id="ComputeStats"></input>
-          <label for="ComputeStats">Histogram</label>
-          </p>
-          <p>
-
-
-          <label for="Background">Background: </label>
-          <input id="Background" value="white" style="width:150px;"/>
-          <label for="Foreground">Foreground: </label>
-          <input id="Foreground" value="black" style="width:150px;"/>
-
-          </p>
+      <p>
+      <label for="Background">Background: </label>
+      <input id="Background" value="white" style="width:150px;"/>
+      <label for="Foreground">Foreground: </label>
+      <input id="Foreground" value="black" style="width:150px;"/>
+      </p>
+    </div>
   </td>
 <tr>
 </table>
@@ -1529,7 +1523,5 @@ let main = function() {
   <option value="3" label="3"></option>
   <option value="4" label="4"></option>
 </datalist>
-
-<textarea id="MetadataJSON" style="width:100%" rows=100></textarea>
 
 </body>
