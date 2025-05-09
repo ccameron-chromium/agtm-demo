@@ -1,0 +1,2841 @@
+<html>
+<head>
+</head>
+
+<script src="color-helpers/math-helpers.js"></script>
+<script src="color-helpers/color-functions.js"></script>
+<script src="color-helpers/piecewise-cubic.js"></script>
+<script src="color-helpers/agtm-adapt.js"></script>
+<script src="color-helpers/agtm-tone-map-gl.js"></script>
+<script>
+
+var texture_color;
+var texture_normal;
+var renderbuffer_depth;
+var fbo;
+var fbo_width;
+var fbo_height;
+var texture_xyzd50_lambda;
+var slice_matrix;
+var slice_vector;
+var flip_slice_vector;
+var save_count = 0;
+var agtm1;
+var agtm2;
+const no_slice_vector = [0, 0, 0, 1.0];
+
+const data_xyzd50_lambda = new Float32Array([
+3.0211177, 0.0911684, 14.0962238, 360,
+3.0211405, 0.0909346, 14.1037650, 361,
+3.0205233, 0.0909107, 14.1096058, 362,
+3.0202434, 0.0907714, 14.1165190, 363,
+3.0197561, 0.0907286, 14.1219508, 364,
+3.0196317, 0.0905499, 14.1289102, 365,
+3.0193443, 0.0904425, 14.1348577, 366,
+3.0190527, 0.0903408, 14.1406587, 367,
+3.0189020, 0.0901849, 14.1471104, 368,
+3.0186242, 0.0900911, 14.1525498, 369,
+3.0180941, 0.0901282, 14.1557267, 370,
+3.0173039, 0.0902929, 14.1568082, 371,
+3.0165788, 0.0904410, 14.1579081, 372,
+3.0162250, 0.0904064, 14.1620279, 373,
+3.0163638, 0.0901369, 14.1699080, 374,
+3.0170950, 0.0895853, 14.1822995, 375,
+3.0184628, 0.0887289, 14.1995951, 376,
+3.0200236, 0.0877956, 14.2178728, 377,
+3.0213367, 0.0870019, 14.2335463, 378,
+3.0221840, 0.0864568, 14.2447809, 379,
+3.0225743, 0.0861699, 14.2511727, 380,
+3.0223658, 0.0861808, 14.2525760, 381,
+3.0219172, 0.0863153, 14.2518431, 382,
+3.0213844, 0.0864819, 14.2507364, 383,
+3.0210492, 0.0865553, 14.2511065, 384,
+3.0210459, 0.0864700, 14.2540267, 385,
+3.0214281, 0.0862077, 14.2596622, 386,
+3.0219210, 0.0858854, 14.2663903, 387,
+3.0222635, 0.0856184, 14.2725298, 388,
+3.0223047, 0.0854695, 14.2772418, 389,
+3.0219758, 0.0854671, 14.2801426, 390,
+3.0212248, 0.0856303, 14.2810394, 391,
+3.0203295, 0.0858434, 14.2814799, 392,
+3.0196463, 0.0859674, 14.2831399, 393,
+3.0194022, 0.0859177, 14.2869425, 394,
+3.0197028, 0.0856569, 14.2932598, 395,
+3.0204476, 0.0852185, 14.3018103, 396,
+3.0213211, 0.0847269, 14.3110690, 397,
+3.0220969, 0.0842780, 14.3197179, 398,
+3.0226677, 0.0839154, 14.3271917, 399,
+3.0229897, 0.0836551, 14.3333250, 400,
+3.0230626, 0.0834881, 14.3384259, 401,
+3.0229109, 0.0833884, 14.3431760, 402,
+3.0225442, 0.0833447, 14.3478866, 403,
+3.0219976, 0.0833452, 14.3526581, 404,
+3.0213102, 0.0833824, 14.3574120, 405,
+3.0203642, 0.0835046, 14.3615208, 406,
+3.0192370, 0.0836861, 14.3651910, 407,
+3.0181776, 0.0838403, 14.3692262, 408,
+3.0173271, 0.0839180, 14.3740839, 409,
+3.0167519, 0.0838950, 14.3800124, 410,
+3.0162164, 0.0838516, 14.3863112, 411,
+3.0154289, 0.0838904, 14.3920134, 412,
+3.0143678, 0.0840235, 14.3968947, 413,
+3.0130447, 0.0842514, 14.4008360, 414,
+3.0114881, 0.0845684, 14.4037814, 415,
+3.0097503, 0.0849643, 14.4056197, 416,
+3.0075120, 0.0855427, 14.4056020, 417,
+3.0044349, 0.0864085, 14.4031224, 418,
+3.0003591, 0.0876104, 14.3979408, 419,
+2.9952528, 0.0891577, 14.3900520, 420,
+2.9892995, 0.0909898, 14.3799486, 421,
+2.9827267, 0.0930426, 14.3678345, 422,
+2.9755701, 0.0953134, 14.3534868, 423,
+2.9677974, 0.0978177, 14.3366710, 424,
+2.9593213, 0.1005869, 14.3170976, 425,
+2.9500940, 0.1036374, 14.2946442, 426,
+2.9401218, 0.1069616, 14.2695626, 427,
+2.9293579, 0.1105701, 14.2419503, 428,
+2.9177461, 0.1144783, 14.2118399, 429,
+2.9052215, 0.1187058, 14.1792002, 430,
+2.8917206, 0.1232713, 14.1440437, 431,
+2.8772560, 0.1281778, 14.1062043, 432,
+2.8618567, 0.1334281, 14.0653482, 433,
+2.8455372, 0.1390285, 14.0211457, 434,
+2.8283003, 0.1449881, 13.9732672, 435,
+2.8100598, 0.1513431, 13.9212752, 436,
+2.7908148, 0.1580851, 13.8655919, 437,
+2.7706766, 0.1651637, 13.8070975, 438,
+2.7497415, 0.1725352, 13.7465951, 439,
+2.7280973, 0.1801603, 13.6848215, 440,
+2.7057642, 0.1880306, 13.6220454, 441,
+2.6825906, 0.1962082, 13.5576469, 442,
+2.6584193, 0.2047558, 13.4910811, 443,
+2.6331194, 0.2137275, 13.4218957, 444,
+2.6065857, 0.2231691, 13.3497088, 445,
+2.5787623, 0.2331103, 13.2742657, 446,
+2.5496893, 0.2435444, 13.1956927, 447,
+2.5194389, 0.2544518, 13.1142940, 448,
+2.4881036, 0.2658062, 13.0304280, 449,
+2.4557976, 0.2775738, 12.9445077, 450,
+2.4226425, 0.2897206, 12.8568091, 451,
+2.3885812, 0.3022844, 12.7667446, 452,
+2.3534565, 0.3153402, 12.6734391, 453,
+2.3170845, 0.3289739, 12.5759631, 454,
+2.2792543, 0.3432827, 12.4733210, 455,
+2.2397688, 0.3583606, 12.3645291, 456,
+2.1986535, 0.3742178, 12.2491636, 457,
+2.1559948, 0.3908393, 12.1269617, 458,
+2.1118619, 0.4082142, 11.9975946, 459,
+2.0663068, 0.4263357, 11.8606579, 460,
+2.0194043, 0.4451831, 11.7161156, 461,
+1.9708100, 0.4649066, 11.5619466, 462,
+1.9198930, 0.4857749, 11.3945301, 463,
+1.8659539, 0.5080848, 11.2099945, 464,
+1.8082143, 0.5321666, 11.0041110, 465,
+1.7459852, 0.5583151, 10.7733257, 466,
+1.6794236, 0.5864720, 10.5179631, 467,
+1.6090850, 0.6164037, 10.2397492, 468,
+1.5357394, 0.6477727, 9.9411783, 469,
+1.4604075, 0.6801181, 9.6257123, 470,
+1.3838868, 0.7130589, 9.2960147, 471,
+1.3063290, 0.7464863, 8.9523656, 472,
+1.2280026, 0.7802380, 8.5955983, 473,
+1.1491931, 0.8141420, 8.2267099, 474,
+1.0701961, 0.8480231, 7.8468493, 475,
+0.9914857, 0.8816200, 7.4575819, 476,
+0.9138012, 0.9145826, 7.0628210, 477,
+0.8377845, 0.9466360, 6.6671559, 478,
+0.7639920, 0.9775544, 6.2748174, 479,
+0.6928858, 1.0071622, 5.8896028, 480,
+0.6247491, 1.0353599, 5.5141180, 481,
+0.5597733, 1.0620449, 5.1485794, 482,
+0.4982749, 1.0870533, 4.7933259, 483,
+0.4406307, 1.1102093, 4.4492575, 484,
+0.3872489, 1.1313412, 4.1177345, 485,
+0.3384997, 1.1503243, 3.8008111, 486,
+0.2943098, 1.1672683, 3.5001636, 487,
+0.2543786, 1.1823776, 3.2165225, 488,
+0.2183590, 1.1958621, 2.9502104, 489,
+0.1858754, 1.2079286, 2.7012030, 490,
+0.1566995, 1.2186961, 2.4693011, 491,
+0.1307869, 1.2281900, 2.2544101, 492,
+0.1079936, 1.2364797, 2.0562076, 493,
+0.0881441, 1.2436441, 1.8741302, 494,
+0.0710425, 1.2497676, 1.7074358, 495,
+0.0564882, 1.2549345, 1.5553223, 496,
+0.0442503, 1.2592372, 1.4165146, 497,
+0.0340985, 1.2627673, 1.2896746, 498,
+0.0258240, 1.2656085, 1.1736981, 499,
+0.0192335, 1.2678381, 1.0676531, 500,
+0.0141701, 1.2695190, 0.9709551, 501,
+0.0105518, 1.2706819, 0.8830421, 502,
+0.0082941, 1.2713577, 0.8030133, 503,
+0.0073047, 1.2715821, 0.7298956, 504,
+0.0074916, 1.2713920, 0.6626971, 505,
+0.0087350, 1.2708366, 0.6006467, 506,
+0.0109658, 1.2699450, 0.5434081, 507,
+0.0141682, 1.2687256, 0.4907005, 508,
+0.0183203, 1.2671895, 0.4422883, 509,
+0.0233951, 1.2653501, 0.3979690, 510,
+0.0293137, 1.2632405, 0.3574203, 511,
+0.0359757, 1.2609003, 0.3204302, 512,
+0.0433268, 1.2583511, 0.2869416, 513,
+0.0513242, 1.2556093, 0.2568592, 514,
+0.0599362, 1.2526872, 0.2300644, 515,
+0.0691267, 1.2495993, 0.2063085, 516,
+0.0788108, 1.2463772, 0.1852728, 517,
+0.0889104, 1.2430489, 0.1667269, 518,
+0.0993703, 1.2396339, 0.1504504, 519,
+0.1101561, 1.2361444, 0.1362370, 520,
+0.1212552, 1.2325850, 0.1239194, 521,
+0.1326492, 1.2289634, 0.1132221, 522,
+0.1443072, 1.2252921, 0.1038289, 523,
+0.1561953, 1.2215842, 0.0954674, 524,
+0.1682763, 1.2178536, 0.0878998, 525,
+0.1805395, 1.2141050, 0.0809859, 526,
+0.1929427, 1.2103517, 0.0746767, 527,
+0.2054075, 1.2066179, 0.0688974, 528,
+0.2178654, 1.2029237, 0.0635787, 529,
+0.2302573, 1.1992859, 0.0586565, 530,
+0.2425563, 1.1957114, 0.0540613, 531,
+0.2548021, 1.1921870, 0.0497583, 532,
+0.2670369, 1.1886989, 0.0457408, 533,
+0.2792982, 1.1852352, 0.0420045, 534,
+0.2916194, 1.1817856, 0.0385467, 535,
+0.3040102, 1.1783472, 0.0353501, 536,
+0.3164741, 1.1749189, 0.0323883, 537,
+0.3290329, 1.1714947, 0.0296477, 538,
+0.3417074, 1.1680687, 0.0271160, 539,
+0.3545180, 1.1646357, 0.0247821, 540,
+0.3674811, 1.1611917, 0.0226348, 541,
+0.3806028, 1.1577356, 0.0206621, 542,
+0.3938883, 1.1542665, 0.0188527, 543,
+0.4073430, 1.1507835, 0.0171960, 544,
+0.4209719, 1.1472861, 0.0156826, 545,
+0.4347833, 1.1437726, 0.0143042, 546,
+0.4487893, 1.1402408, 0.0130511, 547,
+0.4630009, 1.1366887, 0.0119119, 548,
+0.4774270, 1.1331150, 0.0108760, 549,
+0.4920747, 1.1295188, 0.0099335, 550,
+0.5069644, 1.1258962, 0.0090767, 551,
+0.5220934, 1.1222489, 0.0082998, 552,
+0.5374658, 1.1185769, 0.0075967, 553,
+0.5530876, 1.1148797, 0.0069617, 554,
+0.5689678, 1.1111564, 0.0063891, 555,
+0.5851212, 1.1074046, 0.0058741, 556,
+0.6015532, 1.1036242, 0.0054113, 557,
+0.6182628, 1.0998168, 0.0049952, 558,
+0.6352525, 1.0959828, 0.0046201, 559,
+0.6525292, 1.0921221, 0.0042807, 560,
+0.6701088, 1.0882323, 0.0039723, 561,
+0.6879816, 1.0843167, 0.0036927, 562,
+0.7061551, 1.0803749, 0.0034405, 563,
+0.7246366, 1.0764065, 0.0032146, 564,
+0.7434332, 1.0724111, 0.0030136, 565,
+0.7625485, 1.0683892, 0.0028355, 566,
+0.7819817, 1.0643423, 0.0026781, 567,
+0.8017331, 1.0602714, 0.0025404, 568,
+0.8218050, 1.0561773, 0.0024216, 569,
+0.8422008, 1.0520604, 0.0023207, 570,
+0.8629240, 1.0479211, 0.0022364, 571,
+0.8839729, 1.0437609, 0.0021667, 572,
+0.9053455, 1.0395814, 0.0021098, 573,
+0.9270391, 1.0353842, 0.0020641, 574,
+0.9490512, 1.0311708, 0.0020276, 575,
+0.9713796, 1.0269427, 0.0019998, 576,
+0.9940166, 1.0227022, 0.0019785, 577,
+1.0169514, 1.0184522, 0.0019599, 578,
+1.0401751, 1.0141955, 0.0019402, 579,
+1.0636810, 1.0099339, 0.0019154, 580,
+1.0874664, 1.0056687, 0.0018832, 581,
+1.1115244, 1.0014017, 0.0018444, 582,
+1.1358413, 0.9971358, 0.0017997, 583,
+1.1604006, 0.9928743, 0.0017498, 584,
+1.1851825, 0.9886209, 0.0016955, 585,
+1.2101616, 0.9843802, 0.0016349, 586,
+1.2353230, 0.9801547, 0.0015696, 587,
+1.2606582, 0.9759455, 0.0015054, 588,
+1.2861551, 0.9717545, 0.0014487, 589,
+1.3117980, 0.9675836, 0.0014060, 590,
+1.3375861, 0.9634327, 0.0013826, 591,
+1.3634609, 0.9593110, 0.0013745, 592,
+1.3893136, 0.9552352, 0.0013739, 593,
+1.4150313, 0.9512222, 0.0013730, 594,
+1.4404957, 0.9472891, 0.0013632, 595,
+1.4656035, 0.9434498, 0.0013395, 596,
+1.4903843, 0.9396974, 0.0013053, 597,
+1.5149156, 0.9360180, 0.0012642, 598,
+1.5392761, 0.9323981, 0.0012202, 599,
+1.5635459, 0.9288246, 0.0011776, 600,
+1.5877682, 0.9252900, 0.0011390, 601,
+1.6118562, 0.9218061, 0.0011021, 602,
+1.6356904, 0.9183892, 0.0010632, 603,
+1.6591436, 0.9150559, 0.0010189, 604,
+1.6820796, 0.9118236, 0.0009652, 605,
+1.7044081, 0.9087028, 0.0008987, 606,
+1.7261606, 0.9056867, 0.0008228, 607,
+1.7473740, 0.9027676, 0.0007439, 608,
+1.7680831, 0.8999386, 0.0006693, 609,
+1.7883216, 0.8971930, 0.0006065, 610,
+1.8080823, 0.8945300, 0.0005604, 611,
+1.8273267, 0.8919532, 0.0005283, 612,
+1.8460385, 0.8894633, 0.0005070, 613,
+1.8642005, 0.8870613, 0.0004927, 614,
+1.8817943, 0.8847481, 0.0004813, 615,
+1.8988086, 0.8825239, 0.0004721, 616,
+1.9152445, 0.8803871, 0.0004658, 617,
+1.9311061, 0.8783358, 0.0004596, 618,
+1.9464035, 0.8763677, 0.0004508, 619,
+1.9611523, 0.8744796, 0.0004361, 620,
+1.9753725, 0.8726682, 0.0004121, 621,
+1.9890873, 0.8709294, 0.0003799, 622,
+2.0023202, 0.8692593, 0.0003428, 623,
+2.0150888, 0.8676545, 0.0003046, 624,
+2.0274051, 0.8661126, 0.0002698, 625,
+2.0392650, 0.8646334, 0.0002407, 626,
+2.0506935, 0.8632131, 0.0002162, 627,
+2.0617434, 0.8618445, 0.0001955, 628,
+2.0724668, 0.8605208, 0.0001777, 629,
+2.0829156, 0.8592351, 0.0001621, 630,
+2.0931187, 0.8579836, 0.0001487, 631,
+2.1030523, 0.8567689, 0.0001381, 632,
+2.1126946, 0.8555933, 0.0001299, 633,
+2.1220304, 0.8544583, 0.0001234, 634,
+2.1310519, 0.8533646, 0.0001180, 635,
+2.1397666, 0.8523109, 0.0001132, 636,
+2.1481816, 0.8512960, 0.0001090, 637,
+2.1562958, 0.8503200, 0.0001052, 638,
+2.1641104, 0.8493822, 0.0001012, 639,
+2.1716292, 0.8484820, 0.0000970, 640,
+2.1788679, 0.8476174, 0.0000919, 641,
+2.1858281, 0.8467879, 0.0000859, 642,
+2.1924898, 0.8459956, 0.0000789, 643,
+2.1988312, 0.8452429, 0.0000706, 644,
+2.2048287, 0.8445325, 0.0000611, 645,
+2.2104545, 0.8438674, 0.0000496, 646,
+2.2157232, 0.8432456, 0.0000364, 647,
+2.2206714, 0.8426626, 0.0000227, 648,
+2.2253475, 0.8421125, 0.0000099, 649,
+2.2298139, 0.8415876, 0.0000000, 650,
+2.2341141, 0.8410825, -0.0000000, 651,
+2.2382357, 0.8405989, 0.0000000, 652,
+2.2421669, 0.8401383, -0.0000000, 653,
+2.2458974, 0.8397016, -0.0000000, 654,
+2.2494200, 0.8392898, -0.0000000, 655,
+2.2527540, 0.8389003, -0.0000000, 656,
+2.2559107, 0.8385320, 0.0000000, 657,
+2.2588768, 0.8381862, -0.0000000, 658,
+2.2616384, 0.8378645, -0.0000000, 659,
+2.2641811, 0.8375685, -0.0000000, 660,
+2.2664979, 0.8372991, -0.0000000, 661,
+2.2686015, 0.8370545, -0.0000000, 662,
+2.2705230, 0.8368313, -0.0000000, 663,
+2.2723046, 0.8366245, 0.0000000, 664,
+2.2740021, 0.8364275, -0.0000000, 665,
+2.2756758, 0.8362334, 0.0000000, 666,
+2.2773264, 0.8360420, -0.0000000, 667,
+2.2789391, 0.8358551, 0.0000000, 668,
+2.2804956, 0.8356748, 0.0000000, 669,
+2.2819705, 0.8355041, -0.0000000, 670,
+2.2833598, 0.8353433, -0.0000000, 671,
+2.2846820, 0.8351904, -0.0000000, 672,
+2.2859485, 0.8350439, -0.0000000, 673,
+2.2871777, 0.8349018, -0.0000000, 674,
+2.2883965, 0.8347610, -0.0000000, 675,
+2.2896372, 0.8346177, -0.0000000, 676,
+2.2908950, 0.8344725, 0.0000000, 677,
+2.2921529, 0.8343273, -0.0000000, 678,
+2.2933944, 0.8341840, -0.0000000, 679,
+2.2946037, 0.8340445, -0.0000000, 680,
+2.2957946, 0.8339072, -0.0000000, 681,
+2.2969783, 0.8337708, 0.0000000, 682,
+2.2981336, 0.8336377, -0.0000000, 683,
+2.2992320, 0.8335112, -0.0000000, 684,
+2.3002297, 0.8333963, -0.0000000, 685,
+2.3010816, 0.8332982, -0.0000000, 686,
+2.3017877, 0.8332169, -0.0000000, 687,
+2.3023696, 0.8331500, 0.0000000, 688,
+2.3028566, 0.8330939, 0.0000000, 689,
+2.3032983, 0.8330431, 0.0000000, 690,
+2.3037246, 0.8329941, -0.0000000, 691,
+2.3041238, 0.8329482, -0.0000000, 692,
+2.3044871, 0.8329064, -0.0000000, 693,
+2.3048148, 0.8328687, 0.0000000, 694,
+2.3051045, 0.8328354, -0.0000000, 695,
+2.3053682, 0.8328051, -0.0000000, 696,
+2.3056165, 0.8327766, -0.0000000, 697,
+2.3058391, 0.8327510, -0.0000000, 698,
+2.3059852, 0.8327342, -0.0000000, 699,
+2.3059870, 0.8327340, -0.0000000, 700,
+2.3059880, 0.8327339, 0.0000000, 701,
+2.3059870, 0.8327340, -0.0000000, 702,
+2.3059859, 0.8327341, -0.0000000, 703,
+2.3059876, 0.8327339, 0.0000000, 704,
+2.3059877, 0.8327339, 0.0000000, 705,
+2.3059866, 0.8327340, -0.0000000, 706,
+2.3059849, 0.8327342, -0.0000000, 707,
+2.3059889, 0.8327338, 0.0000000, 708,
+2.3059914, 0.8327335, 0.0000000, 709,
+2.3059879, 0.8327339, 0.0000000, 710,
+2.3059855, 0.8327342, -0.0000000, 711,
+2.3059859, 0.8327341, -0.0000000, 712,
+2.3059859, 0.8327341, -0.0000000, 713,
+2.3059846, 0.8327343, -0.0000000, 714,
+2.3059882, 0.8327338, -0.0000000, 715,
+2.3059805, 0.8327347, 0.0000000, 716,
+2.3059851, 0.8327342, -0.0000000, 717,
+2.3059885, 0.8327338, 0.0000000, 718,
+2.3059956, 0.8327330, 0.0000000, 719,
+2.3059886, 0.8327338, 0.0000000, 720,
+2.3059872, 0.8327340, 0.0000000, 721,
+2.3059842, 0.8327343, -0.0000000, 722,
+2.3059947, 0.8327331, 0.0000000, 723,
+2.3059860, 0.8327341, -0.0000000, 724,
+2.3059868, 0.8327340, 0.0000000, 725,
+2.3059934, 0.8327332, -0.0000000, 726,
+2.3059883, 0.8327338, -0.0000000, 727,
+2.3059754, 0.8327353, -0.0000000, 728,
+2.3060024, 0.8327322, -0.0000000, 729,
+2.3059851, 0.8327342, 0.0000000, 730,
+2.3059975, 0.8327328, -0.0000000, 731,
+2.3059902, 0.8327336, 0.0000000, 732,
+2.3059646, 0.8327365, -0.0000000, 733,
+2.3059803, 0.8327347, -0.0000000, 734,
+2.3059879, 0.8327339, 0.0000000, 735,
+2.3060129, 0.8327310, -0.0000000, 736,
+2.3059825, 0.8327345, -0.0000000, 737,
+2.3059594, 0.8327372, 0.0000000, 738,
+2.3060216, 0.8327300, -0.0000000, 739,
+2.3059904, 0.8327336, -0.0000000, 740,
+2.3060131, 0.8327310, -0.0000000, 741,
+2.3059446, 0.8327388, -0.0000000, 742,
+2.3059582, 0.8327373, -0.0000000, 743,
+2.3059664, 0.8327363, -0.0000000, 744,
+2.3059820, 0.8327346, 0.0000000, 745,
+2.3059516, 0.8327380, 0.0000000, 746,
+2.3060314, 0.8327289, -0.0000000, 747,
+2.3060005, 0.8327324, -0.0000000, 748,
+2.3060253, 0.8327296, -0.0000000, 749,
+2.3059811, 0.8327347, -0.0000000, 750,
+2.3059868, 0.8327340, -0.0000000, 751,
+2.3060448, 0.8327273, 0.0000000, 752,
+2.3059117, 0.8327426, 0.0000000, 753,
+2.3059199, 0.8327417, -0.0000000, 754,
+2.3060158, 0.8327307, 0.0000000, 755,
+2.3059049, 0.8327434, -0.0000000, 756,
+2.3059755, 0.8327353, 0.0000000, 757,
+2.3058805, 0.8327462, -0.0000000, 758,
+2.3061047, 0.8327205, -0.0000000, 759,
+2.3059811, 0.8327347, -0.0000000, 760,
+2.3060042, 0.8327320, -0.0000000, 761,
+2.3058169, 0.8327535, -0.0000000, 762,
+2.3059318, 0.8327403, 0.0000000, 763,
+2.3058612, 0.8327484, -0.0000000, 764,
+2.3059413, 0.8327392, -0.0000000, 765,
+2.3060093, 0.8327314, -0.0000000, 766,
+2.3056794, 0.8327693, 0.0000000, 767,
+2.3058382, 0.8327511, -0.0000000, 768,
+2.3058100, 0.8327543, -0.0000000, 769,
+2.3060863, 0.8327226, 0.0000000, 770,
+2.3060042, 0.8327320, -0.0000000, 771,
+2.3061518, 0.8327150, 0.0000000, 772,
+2.3060614, 0.8327254, -0.0000000, 773,
+2.3063851, 0.8326882, -0.0000000, 774,
+2.3060903, 0.8327221, -0.0000000, 775,
+2.3058496, 0.8327498, -0.0000000, 776,
+2.3062849, 0.8326997, -0.0000000, 777,
+2.3057958, 0.8327560, -0.0000000, 778,
+2.3066569, 0.8326570, -0.0000000, 779,
+2.3059891, 0.8327337, 0.0000000, 780,    
+3.0211177, 0.0911684, 14.0962238, 360,
+]);
+
+var canvas;
+var gl;
+var program;
+
+var dragging_shift = false;
+var dragging = false;
+var dragging_last_x;
+var dragging_last_y;
+
+var plane_vertices;
+var plane_indices;
+var plane_indices_count;
+
+var polyhedron_vertices;
+var polyhedron_solid_indices;
+var polyhedron_solid_indices_count;
+var polyhedron_wire_indices;
+var polyhedron_wire_indices_count;
+
+var plane_wire_indices = [0, 0];
+var plane_wire_indices_count = [0, 0];
+
+var view_fov = 5;
+
+let compileShader = function(gl, vertex_source, fragment_source) {
+  let vertex_shader = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vertex_shader, vertex_source);
+  gl.compileShader(vertex_shader);
+  if (!gl.getShaderParameter(vertex_shader, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(vertex_shader));
+     
+  let fragment_shader = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fragment_shader, fragment_source); 
+  gl.compileShader(fragment_shader);
+  if (!gl.getShaderParameter(fragment_shader, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(fragment_shader));
+  
+  let program = gl.createProgram();
+  gl.attachShader(program, vertex_shader);
+  gl.attachShader(program, fragment_shader);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(program));
+
+  return program;
+}
+
+const gamut_common = `
+  const int kXYZ = 0;
+  const int kRec2020YUV = 7;
+  const int kRec2100PqYUV = 14;
+  const int kSRGB = 1;
+  const int kSRGBLinear = 2;
+  const int kP3 = 9;
+  const int kP3Linear = 6;
+  const int kRec2020 = 10;
+  const int kRec2020Linear = 3;
+  const int kOkLab = 4;
+  const int kOkHslabish = 11;
+  const int kWavelength = 5;
+  const int kSphere = 8;
+  const int kICtCpPq = 12;
+  const int kICtCpHlg = 13;
+
+  const int kToneMapModeICtCpPq = 0;
+  const int kToneMapModeYCrCb = 1;
+  const int kToneMapModeYRGB = 2;
+  const int kToneMapModeRpGpBp = 3;
+  const int kToneMapModeMaxRGB = 4;
+  const int kToneMapModeAgtm1 = 5;
+  const int kToneMapModeAgtm2 = 6;
+
+  uniform sampler2D texture_xyzd50_lambda;
+  uniform highp int input_position_type;
+  uniform float input_hdr_headroom;
+  uniform highp int output_position_type;
+  uniform float tonemap_hdr_headroom;
+  uniform highp int tonemap_mode;
+  uniform highp int sphere_position_type;
+  uniform float sdr_white_nits;
+
+    ` + kColorFunctionGLSL + `
+    ` + kAgtmToneMapperGLSL + `
+
+  mat3 p3_to_xyzd50 = mat3( 0.515102,  0.241182,  -0.00104941,
+                            0.291965,  0.692236,   0.0418818,
+                            0.157153,  0.0665819,  0.784378);
+  mat3 srgb_to_xyzd50 = mat3( 0.43606567, 0.2224884,  0.01391602,
+                              0.38514709, 0.71687317, 0.09707642,
+                              0.14306641, 0.06060791, 0.71409607);
+  mat3 rec2020_to_xyzd50 = mat3( 0.673459,  0.279033,   -0.00193139,
+                                 0.165661,  0.675338,    0.0299794,
+                                 0.1251,    0.0456288,   0.797162);
+  mat3 xyzd50_to_rec2020 = mat3( 1.6472752,  -0.68261762,  0.02966273,
+                                -0.39360248,  1.64761778, -0.06291669,
+                                -0.23598029,  0.01281627,  1.25339643);
+  mat3 xyzd50_to_p3 = mat3( 2.40404516, -0.84222838,  0.04818706,
+                           -0.98989869,  1.79885051, -0.09737385,
+                           -0.39763172,  0.01604817,  1.27350664);
+  mat3 xyzd50_to_srgb = mat3( 3.13411215, -0.97878729,  0.07198304,
+                             -1.61739246,  1.91627959, -0.22898585,
+                             -0.4906334,   0.03345471,  1.40538513);
+  mat3 xyzd50_to_xyzd65 = mat3( 0.95547345, -0.02836971,  0.01231400,
+                               -0.02309854,  1.00999546, -0.02050770,
+                                0.06325931,  0.02104140,  1.33036594);
+  mat3 xyzd65_to_xyzd50 = mat3( 1.04792976,  0.02962780, -0.00924303,
+                                0.02294695,  0.99043437,  0.01505523,
+                               -0.05019232, -0.01707377,  0.75187428);
+  mat3 xyzd65_to_lms = mat3( 0.81902244, 0.03298367, 0.04817720,
+                             0.36190626, 0.92928685, 0.26423952,
+                            -0.12887378, 0.03614467, 0.63354783);
+  mat3 lms_to_xyzd65 = mat3( 1.22687987, -0.04057576, -0.07637295,
+                            -0.55781500,  1.11228683, -0.42149332,
+                             0.28139105, -0.07171107,  1.58692402);
+  mat3 lms_to_oklab = mat3( 0.21045426, 1.97799850, 0.02590404,
+     0.79361779, -2.42859221, 0.78277177,
+     -0.00407205, 0.45059371, -0.80867577);
+  mat3 oklab_to_lms = mat3( 1.00000000, 1.00000001, 1.00000005,
+     0.39633779, -0.10556134, -0.08948418,
+     0.21580376, -0.06385417, -1.29148554);
+
+  mat3 rec2020_to_ilms = mat3(
+       0.41210938,  0.16674805,  0.02416992,
+       0.52392578,  0.72045898,  0.07543945,
+       0.06396484,  0.11279297,  0.90039062);
+  mat3 ilms_to_rec2020 = mat3(
+       3.43660669, -0.79132956, -0.02594990,
+      -2.50645212,  1.98360045, -0.09891371,
+       0.06984542, -0.19227090,  1.12486361);
+  mat3 ilms_prime_to_ictcp_pq = mat3(
+       0.5,  1.61376953,  4.37817383,
+       0.5, -3.32348633, -4.24560547,
+       0.0,  1.70971680, -0.13256836);
+  mat3 ictcp_pq_to_ilms_prime = mat3(
+       1.0,         1.0,         1.0,
+       0.00860904, -0.00860904,  0.56003134,
+       0.11102963, -0.11102963, -0.32062717);
+
+  // Y_rec2020 is the luminance vector in rec2020 primaries.
+  vec3 rec2020_rgb_to_yuv(vec3 rgb) {
+    mat4 rgb_to_yuv = mat4(
+        0.262700, -0.139630,  0.500000,  0.0,
+        0.678000, -0.360370, -0.459786,  0.0,
+        0.059300,  0.500000, -0.040214,  0.0,
+        0.000000,  0.500122,  0.500122,  1.0);
+    return (rgb_to_yuv * vec4(rgb, 1.0)).rgb;
+  }
+  vec3 rec2020_yuv_to_rgb(vec3 yuv) {
+    mat4 yuv_to_rgb =  mat4(
+         1.0,         1.0,         1.0,         0.0,
+        -0.00000089, -0.16455278,  1.88139998,  0.0,
+         1.47459975, -0.57135301, -0.00000024,  0.0,
+        -0.73747933,  0.36804268, -0.9409294,   1.0);
+    return (yuv_to_rgb * vec4(yuv, 1.0)).rgb;
+  }
+
+  vec3 xyzd50_to_oklab(vec3 xyzd50) {
+    vec3 lms = xyzd65_to_lms * xyzd50_to_xyzd65 * xyzd50;
+    vec3 Lab = lms_to_oklab * (sign(lms) * pow(abs(lms), vec3(1.0/3.0)));
+    Lab += vec3(0.0, 0.5, 0.5);
+    return Lab;
+  }
+
+  vec3 oklab_to_xyzd50(vec3 Lab) {
+    Lab -= vec3(0.0, 0.5, 0.5);
+    vec3 x = oklab_to_lms * Lab;
+    vec3 lms = sign(x) * pow(abs(x), vec3(3.0));
+    return xyzd65_to_xyzd50 * lms_to_xyzd65 * lms;
+  }
+
+  float findCmax(vec3 Lab) {
+    vec2 ab = Lab.yz - vec2(0.5);
+    if (length(ab) < 0.001) {
+      return 1.0;
+    }
+    Lab.yz = vec2(0.5) + normalize(ab);
+    vec3 Loo = vec3(min(Lab.x, 1.0), 0.5, 0.5);
+    float alpha0 = 0.0;
+    float alpha1 = 1.0;
+    for (int i = 0; i < 64; ++i) {
+      float alpha_test = 0.5 * (alpha0 + alpha1);
+      vec3 Lab_test = alpha_test * Lab + (1.0 - alpha_test) * Loo;
+
+      vec3 xyzd50_test = oklab_to_xyzd50(Lab_test);
+      vec3 srgb_test = xyzd50_to_srgb * xyzd50_test;
+
+      if (srgb_test == clamp(srgb_test, 0.0, 1.0)) {
+        alpha0 = alpha_test;
+      } else {
+        alpha1 = alpha_test;
+      }
+    }
+    float alpha_final = 0.5 * (alpha0 + alpha1);
+    Lab = alpha_final * Lab + (1.0 - alpha_final) * Loo;
+    ab = Lab.yz - vec2(0.5, 0.5);
+    float Cmax = length(ab);
+    if (Cmax < 0.001) {
+      return 1.0;
+    }
+    return Cmax * 2.0;
+  }
+
+  float toe(float x) {
+    float k_1 = 0.206;
+    float k_2 = 0.03;
+    float k_3 = (1.0 + k_1) / (1.0 + k_2);
+    return 0.5 * (k_3 * x - k_1 + sqrt((k_3 * x - k_1) * (k_3 * x - k_1) + 4.0 * k_2 * k_3 * x));
+  }
+
+  float toe_inv(float x) {
+    float k_1 = 0.206;
+    float k_2 = 0.03;
+    float k_3 = (1.0 + k_1) / (1.0 + k_2);
+    return (x * x + k_1 * x) / (k_3 * (x + k_2));
+  }
+
+  vec3 oklab_to_okhslabish(vec3 Lab) {
+    float cmax = findCmax(Lab);
+    Lab.yz -= vec2(0.5, 0.5);
+    Lab.yz /= cmax;
+    Lab.yz += vec2(0.5, 0.5);
+    Lab.x = toe(Lab.x);
+    return Lab;
+  }
+
+  vec3 okhslabish_to_oklab(vec3 hsLabish) {
+    hsLabish.x = toe_inv(hsLabish.x);
+    float cmax = findCmax(hsLabish);
+    hsLabish.yz -= vec2(0.5, 0.5);
+    hsLabish.yz *= cmax;
+    hsLabish.yz += vec2(0.5, 0.5);
+    return hsLabish;
+  }
+
+  vec3 lambda_to_xyzd50(vec3 c) {
+    float lambda = c.x;
+    vec3 xyz = texture(texture_xyzd50_lambda, vec2(lambda, 0.0)).rgb;
+    return c.y * xyz;
+  }
+
+  float parametricEval(float x, float a, float b, float c, float d, float e, float f, float g) {
+    float abs_x = abs(x);
+    float sgn_x = sign(x);
+    if (abs_x < d) {
+      return c * x + f;
+    }
+    return sgn_x * (pow(a * abs_x + b, g) + e);
+  }
+  float pqToLinear(float v) {
+    float c1 =  107.0 / 128.0;
+    float c2 = 2413.0 / 128.0;
+    float c3 = 2392.0 / 128.0;
+    float m1 = 1305.0 / 8192.0;
+    float m2 = 2523.0 / 32.0;
+    float p = pow(clamp(v, 0.0, 1.0), 1.0 / m2);
+    return pow(max(p - c1, 0.0) / (c2 - c3 * p), 1.0 / m1);
+  }
+  float linearToPq(float L) {
+    float c1 =  107.0 / 128.0;
+    float c2 = 2413.0 / 128.0;
+    float c3 = 2392.0 / 128.0;
+    float m1 = 1305.0 / 8192.0;
+    float m2 = 2523.0 / 32.0;
+    float v = pow(clamp(L, 0.0, 1.0), m1);
+    return pow((c1 + c2 * v) / (1.0 + c3 * v), m2);
+  }
+  float srgbToLinear(float x) {
+    const float a = 0.947867345704;
+    const float b = 0.052132654296;
+    const float c = 0.077399380805;
+    const float d = 0.040449937172;
+    const float g = 2.4;
+    return parametricEval(x, a, b, c, d, 0.0, 0.0, g);
+  }
+  float linearToSrgb(float x) {
+    const float a = 1.1371188301409823;
+    const float c = 12.919999999992248;
+    const float d = 0.003130800090713953;
+    const float e = -0.05499994754780801;
+    const float g = 0.4166666666666667;
+    return parametricEval(x, a, 0.0, c, d, e, 0.0, g);
+  }
+
+  vec3 pqToLinear(vec3 c) {
+    return vec3(pqToLinear(c.r), pqToLinear(c.g), pqToLinear(c.b));
+  }
+  vec3 linearToPq(vec3 c) {
+    return vec3(linearToPq(c.r), linearToPq(c.g), linearToPq(c.b));
+  }
+  vec3 srgbToLinear(vec3 c) {
+    return vec3(srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b));
+  }
+  vec3 linearToSrgb(vec3 c) {
+    return vec3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
+  }
+
+  float toneMapGain(float Y, float Lc, float Ld) {
+    if (Lc <= Ld) {
+      return 1.0;
+    }
+    float a = Ld / (Lc*Lc);
+    float b = 1.0 / Ld;
+    return (1.0 + a*Y) / (1.0 + b*Y);
+  }
+  float toneMapInvGain(float Ytm, float Lc, float Ld) {
+    if (Lc <= Ld) {
+      return 1.0;
+    }
+    if (Ytm == 0.0) {
+      return 1.0;
+    }
+    float a = Ld / (Lc*Lc);
+    float b = 1.0 / Ld;
+    return (sqrt(4.0*a*Ytm + pow(b*Ytm-1.0, 2.0)) + b*Ytm-1.0) / (2.0*a*Ytm);
+  }
+
+  vec3 convert(vec3 c, int from, int to) {
+    if (from == to) {
+      return c;
+    }
+
+    // Convert YUV to RGB.
+    if (from == kRec2020YUV || from == kRec2100PqYUV) {
+      c = rec2020_yuv_to_rgb(c);
+    }
+
+    // Convert nonlinear to linear.
+    if (from == kSRGB || from == kP3 || from == kRec2020 || from == kRec2020YUV) {
+      c = srgbToLinear(c);
+    } else if (from == kRec2100PqYUV) {
+      c = pqToLinear(c);
+    }
+
+    // Convert ICtCp to Rec2020 linear.
+    if (from == kICtCpPq) {
+      c -= vec3(0.0, 0.5, 0.5);
+      c = ictcp_pq_to_ilms_prime * c;
+      c = pqToLinear(c);
+      c = ilms_to_rec2020 * c;
+    }
+
+    // Convert from normalized linear to extended linear.
+    if (from == kRec2100PqYUV || from == kICtCpPq) {
+      c *= 10000.0 / sdr_white_nits;
+    }
+
+    // Convert primaries to XYZD50
+    if (from == kSRGB || from == kSRGBLinear) {
+      c = srgb_to_xyzd50 * c;
+    }
+    else if (from == kP3 || from == kP3Linear) {
+      c = p3_to_xyzd50 * c;
+    }
+    else if (from == kRec2020 || from == kRec2020Linear ||
+             from == kRec2020YUV || from == kRec2100PqYUV || from == kICtCpPq) {
+      c = rec2020_to_xyzd50 * c;
+    }
+
+    // Direct-to-XYZD50 conversions.
+    if (from == kWavelength) {
+      c = lambda_to_xyzd50(c);
+    }
+    else if (from == kOkLab || from == kOkHslabish) {
+      if (from == kOkHslabish) {
+        c = okhslabish_to_oklab(c);
+      }
+      c = oklab_to_xyzd50(c);
+    }
+
+    // c is now xyzd50
+
+    // Direct-from-XYZD50 conversions.
+    if (to == kOkLab || to == kOkHslabish) {
+      c = xyzd50_to_oklab(c);
+      if (to == kOkHslabish) {
+        c = oklab_to_okhslabish(c);
+      }
+    }
+
+    // Convert primaries from XYZD50 to sRGB, P3, or Rec2020.
+    if (to == kSRGB || to == kSRGBLinear) {
+      c = xyzd50_to_srgb * c;
+    } else if (to == kP3 || to == kP3Linear) {
+      c = xyzd50_to_p3 * c;
+    } else if (to == kRec2020 || to == kRec2020Linear ||
+               to == kRec2020YUV || to == kRec2100PqYUV || to == kICtCpPq) {
+      c = xyzd50_to_rec2020 * c;
+    }
+
+    // Convert from extended linear to normalized linear.
+    if (to == kRec2100PqYUV || to == kICtCpPq) {
+      c *= sdr_white_nits / 10000.0;
+    }
+
+    // Convert from Rec2020 linear to ICtCp.
+    if (to == kICtCpPq) {
+      c = rec2020_to_ilms * c;
+      c = linearToPq(c);
+      c = ilms_prime_to_ictcp_pq * c;
+      c += vec3(0.0, 0.5, 0.5);
+    }
+
+    // Convert linear to nonlinear.
+    if (to == kSRGB || to == kP3 || to == kRec2020 || to == kRec2020YUV) {
+      c  = linearToSrgb(c);
+    } else if (to == kRec2100PqYUV) {
+      c = linearToPq(c);
+    }
+
+    // Convert RGB to YUV.
+    if (to == kRec2020YUV || to == kRec2100PqYUV) {
+      c = rec2020_rgb_to_yuv(c);
+    }
+
+    return c;
+  }
+
+  // Scale xyz up from [0, 1] to the specified content_hdr_headroom down to
+  // tonemap_hdr_headroom.
+  vec3 scaleAndToneMap(vec3 xyz, float content_hdr_headroom, float tonemap_hdr_headroom) {
+    xyz *= content_hdr_headroom;
+
+    if (tonemap_mode == kToneMapModeAgtm1 ||
+        tonemap_mode == kToneMapModeAgtm2) {
+      return AgtmToneMap(xyz, kPrimariesXYZD50);
+    }
+
+    if (content_hdr_headroom <= tonemap_hdr_headroom) {
+      return xyz;
+    }
+
+    if (tonemap_mode == kToneMapModeICtCpPq) {
+      // Convert to ICtCp, then remove the grey components, to get a just-grey color.
+      vec3 ictcp = convert(xyz, kXYZ, kICtCpPq);
+      float I1 = ictcp[0];
+
+      vec3 rec2020_grey = convert(vec3(I1, 0.5, 0.5), kICtCpPq, kRec2020Linear);
+      float grey = dot(rec2020_grey, vec3(1.0, 1.0, 1.0) / 3.0);
+      float gain = toneMapGain(grey, content_hdr_headroom, tonemap_hdr_headroom);
+      rec2020_grey *= gain;
+
+      vec3 ictcp_tm = convert(rec2020_grey, kRec2020Linear, kICtCpPq);
+      float I2 = ictcp_tm[0];
+      ictcp_tm.yz = min(I1 / I2, I2 / I1) * (ictcp.yz - vec2(0.5)) + vec2(0.5);
+      return convert(ictcp_tm, kICtCpPq, kXYZ);
+    } else if (tonemap_mode == kToneMapModeYCrCb) {
+      vec3 ycrcb = convert(xyz, kXYZ, kRec2100PqYUV);
+      float Y1 = ycrcb[0];
+
+      vec3 rec2020_grey = convert(vec3(Y1, 0.5, 0.5), kRec2100PqYUV, kRec2020Linear);
+      float grey = dot(rec2020_grey, vec3(1.0, 1.0, 1.0) / 3.0);
+      float gain = toneMapGain(grey, content_hdr_headroom, tonemap_hdr_headroom);
+      rec2020_grey *= gain;
+      
+      vec3 ycrcb_tm = convert(rec2020_grey, kRec2020Linear, kRec2100PqYUV);
+      float Y2 = ycrcb_tm[0];
+      ycrcb_tm.yz = min(Y1 / Y2, Y2 / Y1) * (ycrcb.yz - vec2(0.5)) + vec2(0.5);
+      return convert(ycrcb_tm, kRec2100PqYUV, kXYZ);
+    } else {
+      vec3 rec2020 = convert(xyz, kXYZ, kRec2020Linear);
+      vec3 gain = vec3(1.0);
+      if (tonemap_mode == kToneMapModeYRGB) {
+        float L = dot(vec3(0.262700, 0.678000, 0.059300), rec2020);
+        gain = vec3(toneMapGain(L, content_hdr_headroom, tonemap_hdr_headroom));
+      } else if (tonemap_mode == kToneMapModeRpGpBp) {
+        gain = vec3(toneMapGain(rec2020.r, content_hdr_headroom, tonemap_hdr_headroom),
+                    toneMapGain(rec2020.g, content_hdr_headroom, tonemap_hdr_headroom),
+                    toneMapGain(rec2020.b, content_hdr_headroom, tonemap_hdr_headroom));
+      } else if (tonemap_mode == kToneMapModeMaxRGB) {
+        float L = max(max(rec2020.r, rec2020.g), rec2020.b);
+        gain = vec3(toneMapGain(L, content_hdr_headroom, tonemap_hdr_headroom));
+      }
+      return convert(rec2020 * gain, kRec2020Linear, kXYZ);
+    }
+  }
+
+  bool inGamut(vec3 c, int from, int to, float headroom) {
+    vec3 converted = convert(c, from, to);
+    return converted == clamp(converted, 0.0, 1.0);
+  }
+
+  float gamutMapOkLab2020Row(float alpha, float row_target, float L, vec3 A_0ab, vec3 D_row) {
+    for (int newton_iter = 0; newton_iter < 6; ++newton_iter) {
+      vec3 A_Lab = vec3(L, L, L) + alpha * A_0ab;
+ 
+      // Function value.
+      float f0 = dot(D_row,       A_Lab * A_Lab * A_Lab) - row_target;
+      float f1 = dot(D_row, 3.0 * A_0ab * A_Lab * A_Lab);
+      float f2 = dot(D_row, 6.0 * A_0ab * A_0ab * A_Lab);
+
+      float step = (f0 * f1) / (f1 * f1 - 0.5 * f0 * f2);
+      alpha -= step;
+    }
+    return alpha;
+  }
+
+  float gamutMapOkLab2020Guess(vec3 Lab, vec3 p0, vec3 p1, vec3 p2) {
+    vec3 n = cross(p2 - p0, p1 - p0);
+    vec3 Lzz = vec3(Lab[0], 0.0, 0.0);
+    vec3 zab = vec3(0.0, Lab[1], Lab[2]);
+    float alpha = (dot(p0, n) - dot(Lzz, n)) / dot(zab, n);
+    if (alpha < 0.0 || alpha > 1.0) {
+      return 1.0;
+    }
+    return alpha;
+  }
+
+  vec3 gamutMapOkLabOptimized(vec3 c, int from) {
+    vec3 Lab = convert(c, from, kOkLab);
+
+    float L = Lab.r;
+    float one_minus_L = 1.0 - Lab.r;
+    vec2 ab = Lab.gb - vec2(0.5, 0.5);
+
+    vec2 normal_R = vec2(0.409702, -0.912219);
+    vec2 normal_M = vec2(-0.397919, -0.917421);
+    vec2 normal_B = vec2(-0.906800, 0.421562);
+    vec2 normal_C = vec2(-0.171122, 0.985250);
+    vec2 normal_G = vec2(0.460276, 0.887776);
+    vec2 normal_Y = vec2(0.947925, 0.318495);
+
+    float c0_YR = 0.091132;
+    vec2  cW_YR = vec2(0.070370, 0.034139);
+    vec2  cK_YR = vec2(0.018170, 0.378550);
+    float c0_RM = 0.113902;
+    vec2  cW_RM = vec2(0.090836, 0.036251);
+    vec2  cK_RM = vec2(0.226781, 0.018764);
+    float c0_MB = 0.161739;
+    vec2  cW_MB = vec2(-0.008202, -0.264819);
+    vec2  cK_MB = vec2( 0.187156, -0.284304);
+    float c0_BC = 0.102047;
+    vec2  cW_BC = vec2(-0.014804, -0.162608);
+    vec2  cK_BC = vec2(-0.276786,  0.004193);
+    float c0_CG = 0.092029;
+    vec2  cW_CG = vec2(-0.038533, -0.001650);
+    vec2  cK_CG = vec2(-0.232572, -0.094331);
+    float c0_GY = 0.081709;
+    vec2  cW_GY = vec2(-0.034601, -0.002215);
+    vec2  cK_GY = vec2( 0.012185,  0.338031);
+
+    float c0;
+    vec2 cW;
+    vec2 cK;
+    if (dot(ab, normal_R) < 0.0) {
+      if (dot(ab, normal_G) < 0.0) {
+        if (dot(ab, normal_C) < 0.0) {
+          // Blue-Cyan
+          c0 = c0_BC; cW = cW_BC; cK = cK_BC;
+        } else {
+          // Cyan-Green
+          c0 = c0_CG; cW = cW_CG; cK = cK_CG;
+        }
+      } else {
+        if (dot(ab, normal_Y) < 0.0) {
+          // Green-Yellow
+          c0 = c0_GY; cW = cW_GY; cK = cK_GY;
+        } else {
+          // Yellow-Red
+          c0 = c0_YR; cW = cW_YR; cK = cK_YR;
+        }
+      }
+    } else {
+      if (dot(ab, normal_B) < 0.0) {
+        if (dot(ab, normal_M) < 0.0) {
+          // Red-Magenta
+          c0 = c0_RM; cW = cW_RM; cK = cK_RM;
+        } else {
+          // Magenta-Blue
+          c0 = c0_MB; cW = cW_MB; cK = cK_MB;
+        }
+      } else {
+        // Blue-Cyan
+        c0 = c0_BC; cW = cW_BC; cK = cK_BC;
+      }
+    }
+
+    float alpha = 1.0;
+    {
+      float w_denom = dot(cW, ab);
+      if (w_denom > 0.0) {
+        float w_num = c0*one_minus_L;
+        if (w_num < w_denom) {
+          alpha = min(alpha, w_num / w_denom);
+        }
+      }
+      float k_denom = dot(cK, ab);
+      if (k_denom > 0.0) {
+        float k_num = c0*L;
+        if (k_num < k_denom) {
+          alpha = min(alpha,  k_num / k_denom);
+        }
+      }
+    }
+
+    Lab.gb = alpha * ab + vec2(0.5, 0.5);
+    return convert(Lab, kOkLab, kSRGB);
+  }
+
+  vec3 intersectWithUnitCube(vec3 a, vec3 b) {
+    float alpha = 1.0;
+    for (int i = 0; i < 3; ++i) {
+      if (a[i] > 1.0) {
+        float alpha_i = (1.0 - b[i]) / (a[i] - b[i]);
+        alpha = min(alpha, alpha_i);
+      } else if (a[i] < 0.0) {
+        float alpha_i = (0.0 - b[i]) / (a[i] - b[i]);
+        alpha = min(alpha, alpha_i);
+      }
+    }
+    alpha = max(alpha, 0.0);
+    return alpha * a + (1.0 - alpha) * b;
+  }
+
+  vec3 gamutMapScale(vec3 rgb) {
+    return intersectWithUnitCube(rgb, vec3(0.0, 0.0, 0.0));
+  }
+
+  vec3 gamutMapScaleUV(vec3 rgb) {
+    float Y = rec2020_rgb_to_yuv(rgb).r;
+    return intersectWithUnitCube(rgb, vec3(Y, Y, Y));
+  }
+
+  bool inGamut(vec3 c, int from, int to) {
+    return inGamut(c, from, to, 1.0);
+  }
+
+    `;
+
+const blit_vs = `
+    attribute vec2 position;
+    varying vec2 v_texcoord;
+
+    void main() {
+      v_texcoord.xy = (0.5 * position.xy) + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+    `;
+
+const blit_fs = `
+    precision highp float;
+    uniform sampler2D texture_color;
+    uniform sampler2D texture_normal;
+    uniform vec2 viewport;
+    varying vec2 v_texcoord;
+
+    float edgeDetect() {
+      float dx = 1.0 / viewport.x;
+      float dy = 1.0 / viewport.y;
+
+      vec4 N = texture2D(texture_normal, v_texcoord);
+      vec3 n = 2.0 * (N.rgb - vec3(0.5, 0.5, 0.5));
+      for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+          float x = v_texcoord.x + float(i - 1) * dx;
+          float y = v_texcoord.y + float(j - 1) * dy;
+          vec4 Nij = texture2D(texture_normal, vec2(x,y));
+          vec3 n_ij = 2.0 * (Nij.rgb - vec3(0.5, 0.5, 0.5));
+
+          // If the normal is zero then no edge.
+          if (max(length(n), length(n_ij)) < 0.9) {
+            continue;
+          }
+
+          // The alpha value can force segmentation.
+          if (Nij.a != N.a) {
+            return 1.0;
+          }
+
+          float cos_theta = dot(n, n_ij);
+          if (cos_theta < 0.9) {
+            return 1.0;
+          }
+        }
+      }
+      return 0.0;
+    }
+
+    void main() {
+      vec4 color = texture2D(texture_color, v_texcoord.xy);
+
+      color.rgb *= 1.0 - vec3(edgeDetect());
+
+      gl_FragColor.rgb = color.rgb;
+      gl_FragColor.a = 1.0;
+    }
+    `;
+
+const black_vs = `
+    uniform mat4 matrixProjection;
+    uniform mat4 matrixModelView;
+    uniform mat4 matrixSubModel;
+    attribute vec4 position;
+
+    void main() {
+      gl_Position = matrixProjection * matrixModelView * matrixSubModel * position;
+    }
+    `;
+
+const black_fs = `
+    precision highp float;
+    uniform vec4 color;
+
+    void main() {
+      gl_FragColor = color;
+    }
+    `;
+
+const kSRGB = 1;
+const kSRGBLinear = 2;
+const kP3 = 9;
+const kP3Linear = 6;
+const kRec2020 = 10;
+const kRec2020Linear = 3;
+const kRec2020YUV = 7;
+const kRec2100PqYUV = 14;
+const kOkLab = 4;
+const kOkHslabish = 11;
+const kICtCpPq = 12;
+const kICtCpHlg = 13;
+const kXYZ = 0;
+const kWavelength = 5;
+const kSphere = 8;
+
+const kToneMapModeICtCpPq = 0;
+const kToneMapModeYCrCb = 1;
+const kToneMapModeYRGB = 2;
+const kToneMapModeRpGpBp = 3;
+const kToneMapModeMaxRGB = 4;
+const kToneMapModeAgtm1 = 5;
+const kToneMapModeAgtm2 = 6;
+
+let getToneMapMode = function() {
+  if (RadioToneMapMode_ICtCpPq.checked)
+    return kToneMapModeICtCpPq;
+  if (RadioToneMapMode_YCrCb.checked)
+    return kToneMapModeYCrCb;
+  if (RadioToneMapMode_YRGB.checked)
+    return kToneMapModeYRGB;
+  if (RadioToneMapMode_RpGpBp.checked)
+    return kToneMapModeRpGpBp;
+  if (RadioToneMapMode_MaxRGB.checked)
+    return kToneMapModeMaxRGB;
+  if (RadioToneMapMode_AGTM1.checked)
+    return kToneMapModeAgtm1;
+  if (RadioToneMapMode_AGTM2.checked)
+    return kToneMapModeAgtm2;
+  throw('unknown tone map mode');
+}
+
+let getGeometrySpace = function() {
+  if (RadioGeo_sRGB.checked)
+    return kSRGBLinear;
+  if (RadioGeo_P3.checked)
+    return kP3Linear;
+  if (RadioGeo_Rec2020.checked)
+    return kRec2020Linear;
+  if (RadioGeo_OkHslabish.checked)
+    return kOkHslabish;
+  if (RadioGeo_OkLab.checked)
+    return kOkLab;
+  if (RadioGeo_ICtCpPq.checked)
+    return kICtCpPq;
+  if (RadioGeo_XYZ.checked)
+    return kXYZ;
+  if (RadioGeo_Rec2020YUV.checked)
+    return kRec2020YUV;
+  if (RadioGeo_Rec2100PqYUV.checked)
+    return kRec2100PqYUV;
+  throw('unknown geometry space');
+}
+
+let isSpaceRGB = function(space) {
+  switch (space) {
+    case kXYZ:
+    case kSRGB:
+    case kSRGBLinear:
+    case kP3:
+    case kP3Linear:
+    case kRec2020:
+    case kRec2020Linear:
+      return true;
+    case kRec2020YUV:
+    case kRec2100PqYUV:
+    case kOkLab:
+    case kOkHslabish:
+    case kICtCpPq:
+    case kICtCpHlg:
+    case kWavelength:
+    case kSphere:
+      return false;
+  }
+  throw('unknown space');
+}
+
+let getSpaceAxes = function(space) {
+  switch (space) {
+    case kSRGB:
+    case kSRGBLinear:
+    case kP3:
+    case kP3Linear:
+    case kRec2020:
+    case kRec2020Linear:
+      return ['R', 'G', 'B'];
+    case kRec2020YUV:
+    case kRec2100PqYUV:
+      return ['Y', 'u', 'v'];
+    case kOkLab:
+      return ['L', 'a', 'b'];
+    case kOkHslabish:
+      return ['L', 'h', 's'];
+    case kICtCpPq:
+    case kICtCpHlg:
+      return ['I', 'Ct', 'Cp'];
+    case kXYZ:
+      return ['X', 'Y', 'Z'];
+    case kWavelength:
+    case kSphere:
+      throw('bad space for coordinates');
+  }
+  throw('unknown space');
+}
+
+let getGamutNumber = function(gamut) {
+  switch (gamut) {
+    case 'srgb':
+      return kSRGB;
+    case 'srgb-linear':
+      return kSRGBLinear;
+    case 'p3':
+      return kP3;
+    case 'p3-linear':
+      return kP3Linear;
+    case 'rec2020':
+      return kRec2020;
+    case 'rec2020-linear':
+      return kRec2020Linear;
+    case 'rec2020-yuv':
+      return kRec2020YUV;
+    case 'oklab':
+      return kOkLab;
+    case 'okhslabish':
+      return kOkHslabish;
+    case 'xyz':
+      return kXYZ;
+  }
+  throw('bad gamut');
+}
+
+const gamut_vs = `#version 300 es
+    precision highp float;
+    uniform mat4 matrixProjection;
+    uniform mat4 matrixModelView;
+    uniform mat4 matrixSubModel;
+    in vec4 position;
+    in vec4 color;
+    out vec3 v_xyzd50;
+    out vec3 v_position;
+    out vec3 v_normal;
+
+    ` + gamut_common + `
+
+    void main() {
+      if (input_position_type == kSphere) {
+        float phi   = 2.0*3.141593*position.y;
+        float theta = 2.0*3.141593*position.x;
+
+        v_xyzd50 = convert((matrixSubModel * vec4(0.0, 0.0, 0.0, 1.0)).xyz, sphere_position_type, kXYZ);
+
+        vec3 position_center = convert(v_xyzd50, kXYZ, output_position_type);
+        v_normal = vec3(
+           cos(phi),
+           sin(theta) * sin(phi),
+           cos(theta) * sin(phi));
+        v_position = position_center + 0.03 * v_normal;
+      } else {
+        // Use finite difference for normals because work is hard.
+        vec4 epsilon = vec4(0.0, 0.0, 0.05, 0.0);
+
+        vec3 in_color = (matrixSubModel * position).xyz;
+        vec3 in_color_plus_epsilon = (matrixSubModel * (position + epsilon)).xyz;
+        vec3 xyzd50              = convert(in_color, input_position_type, kXYZ);
+        vec3 xyzd50_plus_epsilon = convert(in_color_plus_epsilon, input_position_type, kXYZ);
+
+        xyzd50              = scaleAndToneMap(xyzd50,              input_hdr_headroom, tonemap_hdr_headroom);
+        xyzd50_plus_epsilon = scaleAndToneMap(xyzd50_plus_epsilon, input_hdr_headroom, tonemap_hdr_headroom);
+
+        vec3 position              = convert(xyzd50,              kXYZ, output_position_type);
+        vec3 position_plus_epsilon = convert(xyzd50_plus_epsilon, kXYZ, output_position_type);
+       
+        v_xyzd50 = xyzd50;
+        v_position = position;
+        v_normal = normalize(position_plus_epsilon - position);
+      }
+
+      gl_Position = matrixProjection * matrixModelView * vec4(v_position, 1.0);
+    }`;
+
+const gamut_fs = `#version 300 es
+    precision highp float;
+    uniform vec4 color;
+    uniform vec4 slice_vector;
+    uniform highp int gamut_map_space;
+    uniform highp int gamut_map_discard;
+    uniform highp int gamut_map_type;
+    uniform float gamut_map_headroom;
+    in vec3 v_xyzd50;
+    in vec3 v_position;
+    in vec3 v_normal;
+    layout(location = 0) out vec4 f_out_color;
+    layout(location = 1) out vec4 f_out_normal;
+    ` + gamut_common + `
+    void main() {
+      vec3 xyzd50_color = v_xyzd50;
+      if (input_position_type != kSphere) {
+        xyzd50_color = convert(v_position, output_position_type, kXYZ);
+      }
+    
+      vec3 srgb_color = convert(xyzd50_color, kXYZ, kSRGB);
+      vec3 srgb_color_clamped = clamp(srgb_color, 0.0, 1.0);
+
+      // Discard based on slicing.
+      if (dot(slice_vector, vec4(v_position, 1.0)) < 0.0) {
+        discard;
+      }
+      // Discard out-of-gamut.
+      if (gamut_map_discard == 1) {
+        if (!inGamut(xyzd50_color, kXYZ, gamut_map_space, gamut_map_headroom)) {
+          discard;
+        }
+      }
+
+      // Gamut map
+      if (gamut_map_type != 0) {
+        // CSS
+        if (gamut_map_type == 1) {
+          vec3 c = convert(xyzd50_color, kXYZ, kRec2020Linear);
+          c = clamp(c, 0.0, 1.0);
+          srgb_color = convert(c, kRec2020Linear, kSRGB);
+        }
+        if (gamut_map_type == 5) {
+          srgb_color = gamutMapOkLabOptimized(xyzd50_color, kXYZ);
+        }
+        if (gamut_map_type == 2) {
+          if (!inGamut(xyzd50_color, kXYZ, gamut_map_space)) {
+            vec3 Lab = convert(xyzd50_color, kXYZ, kOkLab);
+            vec3 Loo = vec3(min(Lab.x, 1.0), 0.5, 0.5);
+            float alpha0 = 0.0;
+            float alpha1 = 1.0;
+            for (int i = 0; i < 8; ++i) {
+              float alpha_test = 0.5 * (alpha0 + alpha1);
+              vec3 Lab_test = alpha_test * Lab + (1.0 - alpha_test) * Loo;
+              if (inGamut(Lab_test, kOkLab, gamut_map_space)) {
+                alpha0 = alpha_test;
+              } else {
+                alpha1 = alpha_test;
+              }
+            }
+            float alpha_final = 0.5 * (alpha0 + alpha1);
+            vec3 Lab_final = alpha_final * Lab + (1.0 - alpha_final) * Loo;
+            srgb_color = convert(Lab_final, kOkLab, kSRGB);
+          }
+        }
+        // L2
+        if (gamut_map_type == 3) {
+          vec3 c = convert(xyzd50_color, kXYZ, kRec2020Linear);
+          float M = max(max(c.r, c.g), c.b);
+          if (M > 1.0) {
+            vec3 u = vec3(1.0, 1.0, 1.0);
+            vec3 v = u - (1.0/M) * c;
+            vec3 w = (1.0 - 1.0/M) * c;
+            float alpha = dot(v, w) / dot(v, v);
+            c = ((1.0 - alpha)/M) * c + (alpha)*u;
+            c = clamp(c, 0.0, 1.0);
+          }
+          srgb_color = convert(c, kRec2020Linear, kSRGB);
+        }
+        // Y
+        if (gamut_map_type == 4) {
+          vec3 c = convert(xyzd50_color, kXYZ, kRec2020Linear);
+          c = gamutMapScaleUV(c);
+          srgb_color = convert(c, kRec2020Linear, kSRGB);
+        }
+      }
+
+      f_out_color.rgb = clamp(color.rgb * srgb_color, 0.0, 16.0);
+      f_out_color.a = 1.0;
+
+      f_out_normal.rgb = 0.5 * normalize(v_normal) + vec3(0.5);
+      f_out_normal.a = 1.0;
+      if (input_position_type == kSphere) {
+        f_out_normal.a = 2.0;
+      }
+
+
+    }`;
+
+let matrixOrtho2D = function(left, right, bottom, top, znear, zfar) {
+    var tx = -(right+left)/(right-left);
+    var ty = -(top+bottom)/(top-bottom);
+    var tz = -(zfar+znear)/(zfar-znear);
+    return [2/(right-left), 0,               0,              tx,
+            0,              2/(top-bottom),  0,              ty,
+            0,              0,              -2/(zfar-znear), tz,
+            0,              0,               0,              1];
+}
+
+let matrixPerspective = function(fovy, aspect, znear, zfar) {
+    var ymax = znear * Math.tan(fovy * Math.PI / 360.0);
+    var ymin = -ymax;
+    var xmin = ymin * aspect;
+    var xmax = ymax * aspect;
+    return matrixFrustum(xmin, xmax, ymin, ymax, znear, zfar);
+}
+
+let matrixFrustum = function(left, right, bottom, top, znear, zfar) {
+    var X = 2*znear/(right-left);
+    var Y = 2*znear/(top-bottom);
+    var A = (right+left)/(right-left);
+    var B = (top+bottom)/(top-bottom);
+    var C = -(zfar+znear)/(zfar-znear);
+    var D = -2*zfar*znear/(zfar-znear);
+    return [X, 0,  A, 0,
+            0, Y,  B, 0,
+            0, 0,  C, D,
+            0, 0, -1, 0];
+}
+
+let matrixRotation = function(axis, angleInDegrees) {
+  const angleInRadians = angleInDegrees * Math.PI / 180;
+  const c = Math.cos(angleInRadians);
+  const s = Math.sin(angleInRadians);
+  if (axis == 'x') {
+    return [ 1,  0, 0, 0,
+             0,  c, s, 0,
+             0, -s, c, 0,
+             0,  0, 0, 1];
+  }
+  if (axis == 'y') {
+    return [ c, 0, -s, 0,
+             0, 1,  0, 0,
+             s, 0,  c, 0,
+             0, 0,  0, 1];
+  }
+  if (axis == 'z') {
+    return [ c, s, 0, 0,
+            -s, c, 0, 0,
+             0, 0, 1, 0,
+             0, 0, 0, 1];
+  }
+}
+
+let matrixTranslation = function(tx, ty, tz) {
+  return [ 1,  0,  0, 0,
+           0,  1,  0, 0,
+           0,  0,  1, 0,
+          tx, ty, tz, 1];
+}
+
+let matrixScale= function(sx, sy, sz) {
+  return [sx,  0,  0, 0,
+           0, sy,  0, 0,
+           0,  0, sz, 0,
+           0,  0,  0, 1];
+}
+
+let matrixIdentity = function() {
+  return [1, 0, 0, 0,
+          0, 1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1];
+}
+
+let matrixMultiply = function(a, b) {
+  let c = [0,0,0,0,
+           0,0,0,0,
+           0,0,0,0,
+           0,0,0,0];
+  for (let i = 0; i < 4; ++i) {
+    for (let j = 0; j < 4; ++j) {
+      for (let k = 0; k < 4; ++k) {
+        c[4*i + j] += a[4*k + j] * b[4*i + k];
+      }
+    }
+  }
+  return c;
+}
+
+let vecScale = function(a, x) {
+  return [a*x[0], a*x[1], a*x[2]];
+}
+
+let vecAdd = function(a, b) {
+  return [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+}
+
+let vecSub = function(a, b) {
+  return [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+}
+
+let vecCross = function(a, b) {
+  return [
+      a[1]*b[2] - a[2]*b[1],
+      a[2]*b[0] - a[0]*b[2],
+      a[0]*b[1] - a[1]*b[0]];
+}
+
+let vecDot = function(a, b) {
+  return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+let vecProject = function(a, b) {
+  return vecScale(vecDot(a, b) / vecDot(b, b), b);
+}
+
+let vecAbs = function(a) {
+  return [Math.abs(a[0]), Math.abs(a[1]), Math.abs(a[2])];
+}
+
+let vecNormInfty = function(a) {
+  a = vecAbs(a);
+  return Math.max(Math.max(a[0], a[1]), a[2]);
+}
+
+let matrixPlaneToPlane = function(a, b, c) {
+  let M = [0,0,0,0,
+           0,0,0,0,
+           0,0,0,0,
+           0,0,0,1];
+  let ab = vecSub(b, a);
+  let ac = vecSub(c, a);
+  let ad = vecProject(ac, ab);
+  let dc = vecSub(ac, ad);
+  let z = vecCross(ab, ac);
+
+  for (let i = 0; i < 3; ++i) {
+    M[4*0 + i] = ab[i];
+    M[4*1 + i] = dc[i];
+    M[4*2 + i] = z[i];
+    M[4*3 + i] = a[i];
+  }
+  return M;
+}
+
+let sliceVector = function(a, b, c) {
+  let n = vecCross(vecSub(b, a), vecSub(c, a));
+  return [-n[0], -n[1], -n[2], vecDot(n, a)];
+}
+
+let matrixApply = function(A, x, normalize) {
+  let b = [0,0,0,0];
+  for (let i = 0; i < 4; ++i) {
+    for (let j = 0; j < 4; ++j) {
+      b[i] += A[4*j + i] * x[j];
+    }
+  }
+  if (normalize) {
+    for (let i = 0; i < 4; ++i) {
+      b[i] /= b[3];
+    }
+  }
+  return b;
+}
+
+let matrixDump = function(A) {
+  str = '';
+  for (let i = 0; i < 4; ++i) {
+    for (let j = 0; j < 4; ++j) {
+      str += (A[4*i + j] * 1.0).toFixed(2) + ', ';
+    }
+    str += '\n';
+  }
+  console.log(str);
+}
+
+let matrixConcat = function(a) {
+  let c = matrixIdentity();
+  for (let i = 0; i < a.length; ++i) {
+    c = matrixMultiply(c, a[i]);
+  }
+  return c;
+}
+
+let makePolyhedron = function() {
+  let data = null;
+  let i = 0;
+
+  data = new Float32Array(4 * 8);
+  data[i++] = 0.0; data[i++] = 0.0; data[i++] = 0.0; data[i++] = 1.0;
+  data[i++] = 0.0; data[i++] = 0.0; data[i++] = 1.0; data[i++] = 1.0;
+  data[i++] = 0.0; data[i++] = 1.0; data[i++] = 0.0; data[i++] = 1.0;
+  data[i++] = 0.0; data[i++] = 1.0; data[i++] = 1.0; data[i++] = 1.0;
+  data[i++] = 1.0; data[i++] = 0.0; data[i++] = 0.0; data[i++] = 1.0;
+  data[i++] = 1.0; data[i++] = 0.0; data[i++] = 1.0; data[i++] = 1.0;
+  data[i++] = 1.0; data[i++] = 1.0; data[i++] = 0.0; data[i++] = 1.0;
+  data[i++] = 1.0; data[i++] = 1.0; data[i++] = 1.0; data[i++] = 1.0;
+  
+  polyhedron_vertices = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, polyhedron_vertices);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+
+  let iK = 0;
+  let iB = 1;
+  let iG = 2;
+  let iC = 3;
+  let iR = 4;
+  let iM = 5;
+  let iY = 6;
+  let iW = 7;
+  data = new Uint16Array(12 * 3);
+  i = 0;
+  data[i++] = iW; data[i++] = iM; data[i++] = iR;
+  data[i++] = iW; data[i++] = iB; data[i++] = iM;
+  data[i++] = iW; data[i++] = iC; data[i++] = iB;
+  data[i++] = iW; data[i++] = iG; data[i++] = iC;
+  data[i++] = iW; data[i++] = iY; data[i++] = iG;
+  data[i++] = iW; data[i++] = iR; data[i++] = iY;
+
+  data[i++] = iK; data[i++] = iR; data[i++] = iM;
+  data[i++] = iK; data[i++] = iM; data[i++] = iB;
+  data[i++] = iK; data[i++] = iB; data[i++] = iC;
+  data[i++] = iK; data[i++] = iC; data[i++] = iG;
+  data[i++] = iK; data[i++] = iG; data[i++] = iY;
+  data[i++] = iK; data[i++] = iY; data[i++] = iR;
+
+  polyhedron_solid_indices = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, polyhedron_solid_indices);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  polyhedron_solid_indices_count = 12*3;
+
+  data = new Uint16Array(18 * 2);
+  i = 0;
+  data[i++] = iW; data[i++] = iM;
+  data[i++] = iW; data[i++] = iB;
+  data[i++] = iW; data[i++] = iC;
+  data[i++] = iW; data[i++] = iG;
+  data[i++] = iW; data[i++] = iY;
+  data[i++] = iW; data[i++] = iR;
+
+  data[i++] = iM; data[i++] = iR;
+  data[i++] = iB; data[i++] = iM;
+  data[i++] = iC; data[i++] = iB;
+  data[i++] = iG; data[i++] = iC;
+  data[i++] = iY; data[i++] = iG;
+  data[i++] = iR; data[i++] = iY;
+
+  data[i++] = iK; data[i++] = iR;
+  data[i++] = iK; data[i++] = iM;
+  data[i++] = iK; data[i++] = iB;
+  data[i++] = iK; data[i++] = iC;
+  data[i++] = iK; data[i++] = iG;
+  data[i++] = iK; data[i++] = iY;
+
+  polyhedron_wire_indices = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, polyhedron_wire_indices);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  polyhedron_wire_indices_count = 18*2;
+}
+
+
+const kPolyhedronWire = -2;
+const kPolyhedronSolid = -1;
+const kSolid     = null;
+const kGrid1x1   = 0;
+const kGrid4x4   = 1;
+const kGrid16x16 = 2;
+const kGrid32x32 = 3;
+const kGrid32x8 = 4;
+
+let makePlane = function() {
+  // n = 17
+  // 6 * (17x17 + 16x16)
+  const n = 129;
+  let nGrids = 5;
+  let steps = [
+    [(n-1) /  1, (n-1) /  1], // kGrid1x1
+    [(n-1) /  4, (n-1) /  4], // kGrid4x4
+    [(n-1) / 16, (n-1) / 16], // kGrid16x16
+    [(n-1) / 32, (n-1) / 32], // kGrid32x32
+    [(n-1) / 32, (n-1) /  8], // kGrid32x8
+    ];
+
+  {
+    let data = new Float32Array(4 * (n*n + (n-1)*(n-1)));
+    for (let x = 0; x < n; ++x) {
+      for (let y = 0; y < n; ++y) {
+        let offset = 4 * (y*n + x);
+        data[offset+0] = x/(n-1);
+        data[offset+1] = y/(n-1);
+        data[offset+2] = 0.0;
+        data[offset+3] = 1.0;
+      }
+    }
+    for (let x = 0; x < n-1; ++x) {
+      for (let y = 0; y < n-1; ++y) {
+        let offset = 4 * (n*n + y*(n-1) + x);
+        data[offset+0] = (x + 0.5)/(n-1);
+        data[offset+1] = (y + 0.5)/(n-1);
+        data[offset+2] = 0.0;
+        data[offset+3] = 1.0;
+      }
+    }
+    plane_vertices = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, plane_vertices);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  }
+
+  {
+    let nTriangles = 4 * (n - 1) * (n - 1);
+    let indices = new Uint16Array(3 * nTriangles);
+    let i = 0;
+    for (let x = 0; x < n-1; ++x) {
+      for (let y = 0; y < n-1; ++y) {
+        let i0 = (y+0)*n + (x+0);
+        let i1 = (y+0)*n + (x+1);
+        let i2 = (y+1)*n + (x+1);
+        let i3 = (y+1)*n + (x+0);
+        let ic = n*n + y*(n-1) + x;
+        indices[i++] = i0; indices[i++] = ic; indices[i++] = i1;
+        indices[i++] = i1; indices[i++] = ic; indices[i++] = i2;
+        indices[i++] = i2; indices[i++] = ic; indices[i++] = i3;
+        indices[i++] = i3; indices[i++] = ic; indices[i++] = i0;
+      }
+    }
+    plane_indices = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, plane_indices);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+    plane_indices_count = indices.length;
+  }
+
+  for (let grid_index = 0; grid_index < nGrids; ++grid_index) {
+    let nLines = 2 * n * n;
+    let indices = new Uint16Array(2 * nLines);
+    let i = 0;
+    let step_x = steps[grid_index][0];
+    let step_y = steps[grid_index][1];
+    for (let x = 0; x < n-1; x += 1) {
+      for (let y = 0; y < n; y += step_y) {
+        indices[i++] = (y+0)*n + (x+0);
+        indices[i++] = (y+0)*n + (x+1);
+      }
+    }
+    for (let x = 0; x < n; x += step_x) {
+      for (let y = 0; y < n-1; y += 1) {
+        indices[i++] = (y+0)*n + (x+0);
+        indices[i++] = (y+1)*n + (x+0);
+      }
+    }
+
+    plane_wire_indices[grid_index] = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, plane_wire_indices[grid_index]);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+    plane_wire_indices_count[grid_index] = i;
+  }
+
+}
+
+let updateSlice = function() {
+  var a, b, c;
+  let h = 1.0;
+  if (GamutRender_Solid.checked || RadioPlane_HDR.checked) {
+    h = ContentHdrHeadroom.value;
+  }
+  if (SliceAxis.value == 0) {
+    a = [SliceValue.value, 1-h, 1-h];
+    b = [SliceValue.value,   h, 1-h];
+    c = [SliceValue.value, 1-h,  h];
+  }
+  if (SliceAxis.value == 1) {
+    a = [0, SliceValue.value, 1-h];
+    b = [h, SliceValue.value, 1-h];
+    c = [0, SliceValue.value,   h];
+  }
+  if (SliceAxis.value == 2) {
+    a = [1-h, 1-h, SliceValue.value];
+    b = [  h, 1-h, SliceValue.value];
+    c = [1-h,   h, SliceValue.value];
+  }
+  if (SliceAxis.value == 3) {
+    c = Math.cos(Math.pi * SliceValue.value);
+    s = Math.sin(Math.pi * SliceValue.value);
+    a = [0, 1.0, 1];
+    b = [1, 1.0, 1];
+    c = [0, 0.0, 0];
+
+//
+
+    a = [0, 1.0, 1];
+    b = [1, 1.0, 1];
+    c = [0, 0.0, 0];
+
+  }
+
+  slice_matrix = matrixPlaneToPlane(a, b, c);
+  if (SliceFlip.checked) {
+    slice_vector = sliceVector(a, c, b);
+  } else {
+    slice_vector = sliceVector(a, b, c);
+  }
+  flip_slice_vector = [
+      -slice_vector[0], -slice_vector[1], -slice_vector[2], -slice_vector[3]];
+}
+
+let drawGrid = function(program, gridIndex) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, plane_vertices);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, plane_wire_indices[gridIndex]);
+
+  let positionLocation = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(positionLocation, 4, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(positionLocation);
+
+  gl.drawElements(gl.LINES, plane_wire_indices_count[gridIndex], gl.UNSIGNED_SHORT, 0);
+}
+
+let drawPlane = function(program) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, plane_vertices);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, plane_indices);
+
+  let positionLocation = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(positionLocation, 4, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(positionLocation);
+
+  gl.drawElements(gl.TRIANGLES, plane_indices_count, gl.UNSIGNED_SHORT, 0);
+}
+
+let drawPolyhedron = function(program, grid_index) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, polyhedron_vertices);
+ 
+  let positionLocation = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(positionLocation, 4, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(positionLocation);
+ 
+  if (grid_index == kPolyhedronWire) {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, polyhedron_wire_indices);
+    gl.drawElements(gl.LINES, polyhedron_wire_indices_count, gl.UNSIGNED_SHORT, 0);
+  } else {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, polyhedron_solid_indices);
+    gl.drawElements(gl.TRIANGLES, polyhedron_solid_indices_count, gl.UNSIGNED_SHORT, 0);
+  }
+}
+
+let drawCube = function(program, grid_index = null, scale = 1.0) {
+  if (grid_index == kPolyhedronWire || grid_index == kPolyhedronSolid) {
+    drawPolyhedron(program, grid_index);
+    return;
+  }
+
+  const axes = ['x', 'x', 'x', 'x', 'y', 'y'];
+  const angles = [0, 90, 180, 270, 90, 270];
+  for (let i = 0; i < 6; ++i) {
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'matrixSubModel'), false,
+        matrixConcat([
+            matrixScale(scale, scale, scale),
+            matrixTranslation(0.5, 0.5, 0.5),
+            matrixRotation(axes[i], angles[i]),
+            matrixTranslation(-0.5, -0.5, -0.5),
+            ]));
+    if (grid_index != null) {
+      drawGrid(program, grid_index);
+    } else {
+      drawPlane(program);
+    }
+  }
+
+  gl.uniformMatrix4fv(gl.getUniformLocation(program, 'matrixSubModel'), false,
+      matrixIdentity());
+}
+
+let moveElementToPoint = function(element, matrix, point) {
+  const a0xyzw = matrixApply(matrix, point, true);
+  let a0x = canvas.clientWidth  * (a0xyzw[0] + 1) / 2 - 8;
+  let a0y = canvas.clientHeight * (1 - a0xyzw[1]) / 2 - 32;
+  let r = canvas.getBoundingClientRect();
+  
+  element.style.left = (r.left + a0x) + 'px';
+  element.style.top  = (r.top + window.scrollY + a0y) + 'px';
+}
+
+let drawToFbo = function(width, height) {
+  gl.viewport(0, 0, width, height);
+
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
+  gl.clearBufferfv(gl.COLOR, 0, [1.0, 1.0, 1.0, 1.0]);
+  gl.clearBufferfv(gl.COLOR, 1, [0.5, 0.5, 0.5, 0.0]);
+
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+
+  let matrixProjection = null;
+  let matrixModelView = null;
+  {
+    matrixProjection = matrixPerspective(CameraFov.value, width / height, 2, 6);
+    // matrixProjection = matrixOrtho2D(-width / height, width / height, -1.0, 1.0, -2.0, 2.0);
+  }
+
+  let out_space = getGeometrySpace();
+
+  {
+    let matrices = []
+    matrices.push(matrixTranslation(0, -0.1 * Math.max(CameraZ.value - 4), -CameraZ.value));
+    matrices.push(matrixRotation('x', CameraPhi.value));
+    matrices.push(matrixRotation('y', CameraTheta.value));
+
+    if (isSpaceRGB(out_space)) {
+      matrices.push(matrixRotation('x', 55));
+      matrices.push(matrixRotation('y', -135));
+    }
+
+    matrices.push([ 0,  1, 0, 0,
+                   -1,  0, 0, 0,
+                    0,  0, 1, 0,
+                    0,  0, 0, 1]);
+    matrices.push(matrixTranslation(-0.5, -0.5, -0.5));
+    matrixModelView = matrixConcat(matrices);
+  }
+
+  const matrixModelViewProjection = matrixConcat([matrixProjection, matrixModelView]);
+  moveElementToPoint(AxisOrigin,  matrixModelViewProjection, [0, 0, 0, 1]);
+  moveElementToPoint(Axis0,     matrixModelViewProjection, [1, 0, 0, 1]);
+  moveElementToPoint(Axis1,     matrixModelViewProjection, [0, 1, 0, 1]);
+  moveElementToPoint(Axis2,     matrixModelViewProjection, [0, 0, 1, 1]);
+
+  let axes_labels = getSpaceAxes(out_space);
+  Axis0.innerText = axes_labels[0];
+  Axis1.innerText = axes_labels[1];
+  Axis2.innerText = axes_labels[2];
+  if (!isSpaceRGB(out_space)) {
+    moveElementToPoint(AxisOrigin, matrixModelViewProjection, [-0.08, 0.5, 0.5, 1]);
+    moveElementToPoint(Axis0,      matrixModelViewProjection, [1, 0.5, 0.5, 1]);
+    moveElementToPoint(Axis1,      matrixModelViewProjection, [0, 1,   0.5, 1]);
+    moveElementToPoint(Axis2,      matrixModelViewProjection, [0, 0.5,   1, 1]);
+  }
+
+  let gamut_space = kSRGB;
+  if (RadioVolume_sRGB.checked)          gamut_space = kSRGBLinear;
+  if (RadioVolume_P3.checked)            gamut_space = kP3Linear;
+  if (RadioVolume_Rec2020.checked)       gamut_space = kRec2020Linear;
+
+  gl.useProgram(gamut_program);
+  gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixProjection'), false,
+                      matrixProjection);
+  gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixModelView'), false,
+                      matrixModelView);
+  gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+
+  gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [1, 1, 1, 1]);
+  gl.uniform1i(gl.getUniformLocation(gamut_program, 'texture_xyzd50_lambda'), 0);
+  gl.uniform1i(gl.getUniformLocation(gamut_program, 'output_position_type'), out_space);
+  gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_discard'), 0);
+  gl.uniform1f(gl.getUniformLocation(gamut_program, 'tonemap_hdr_headroom'), DisplayHdrHeadroom.value);
+  gl.uniform1i(gl.getUniformLocation(gamut_program, 'tonemap_mode'), getToneMapMode());
+  gl.uniform1f(gl.getUniformLocation(gamut_program, 'sdr_white_nits'), SdrWhiteNits.value);
+
+  if (RadioToneMapMode_AGTM1.checked && agtm1) {
+    agtm1.setUniforms(log2(DisplayHdrHeadroom.value), gamut_program, 3);
+  }
+  if (RadioToneMapMode_AGTM2.checked && agtm2) {
+    agtm2.setUniforms(log2(DisplayHdrHeadroom.value), gamut_program, 3);
+  }
+
+  let gamut_map_type = 0;
+  if (RadioGamutMap_Clamp.checked) {
+    gamut_map_type = 1;
+  }
+  if (RadioGamutMap_CSS.checked) {
+    gamut_map_type = 2;
+  }
+  if (RadioGamutMap_CSS_OPT.checked) {
+    gamut_map_type = 5;
+  }
+  if (RadioGamutMap_L2.checked) {
+    gamut_map_type = 3;
+  }
+  if (RadioGamutMap_Y.checked) {
+    gamut_map_type = 4;
+  }
+  gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_type'), gamut_map_type);
+
+  const draw_sdr_solid = GamutRender_Solid.checked || GamutRender_SdrSolid_HdrWireframe.checked;
+  const draw_hdr_solid = GamutRender_Solid.checked || GamutRender_HdrSolid_SdrWireframe.checked;
+
+  gl.enable(gl.POLYGON_OFFSET_FILL);
+  gl.polygonOffset(1, 0);
+
+  // Draw the gamut
+  {
+
+    // Solid
+    {
+      gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), gamut_space);
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [1, 1, 1, 1]);
+      gl.enable(gl.CULL_FACE);
+
+      // HDR
+      const slice_hdr = draw_hdr_solid && (RadioSlice_HDR.checked || RadioSlice_All.checked);
+      if (draw_hdr_solid) {
+        gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'),
+                      slice_hdr ? slice_vector : no_slice_vector);
+
+        gl.uniform1f(gl.getUniformLocation(gamut_program, 'input_hdr_headroom'), ContentHdrHeadroom.value);
+        drawCube(gamut_program, kSolid, 1.0);
+      }
+
+      // SDR
+      const slice_sdr = draw_sdr_solid && RadioSlice_All.checked;
+      if (draw_sdr_solid) {
+        gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'),
+                      slice_sdr ? slice_vector : no_slice_vector);
+        gl.uniform1f(gl.getUniformLocation(gamut_program, 'input_hdr_headroom'), 1.0);
+        drawCube(gamut_program, kSolid, 1.0);
+      }
+
+
+      gl.disable(gl.CULL_FACE);
+    }
+
+    // Don't draw the slicing plane in auto mode if:
+    // - we're looking at the wireframe
+    // - we're not slicing anything
+    let draw_plane = true;
+    if (RadioPlane_Auto.checked) {
+      if (RadioSlice_None.checked) {
+        draw_plane = false;
+      }
+      if (GamutRender_Wireframe.checked) {
+        draw_plane = false;
+      }
+    }
+
+    if (draw_plane) {
+      // Draw the full plane only when selected.
+      let gamut_map_discard = true;
+      if (RadioPlane_Plane.checked) {
+        gamut_map_discard = false;
+      }
+
+      // Determine if we're drawing the big plane or small plane.
+      let gamut_map_headroom = 1.0;
+      if (RadioPlane_HDR.checked) {
+        // Explicity requested.
+        gamut_map_headroom = ContentHdrHeadroom.value;
+      }
+      if (RadioPlane_Auto.checked) {
+        // In auto mode and we're both rendering and slicing the HDR gamut.
+        if (GamutRender_Solid.checked) {
+          if (RadioSlice_HDR.checked || RadioSlice_All.checked) {
+            gamut_map_headroom = ContentHdrHeadroom.value;
+          }
+        }
+      }
+
+      let plane_scale = 1.0;
+      if (!RadioPlane_Plane.checked) {
+        plane_scale = Math.max(gamut_map_headroom, 4.0);
+      }
+
+
+    // Draw the slicing plane.
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), out_space);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_space'), gamut_space);
+    gl.uniform1f(gl.getUniformLocation(gamut_program, 'gamut_map_headroom'), gamut_map_headroom);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_discard'), gamut_map_discard);
+    gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'), no_slice_vector);
+
+    let matrices = [matrixIdentity()]
+    matrices.push(slice_matrix);
+    
+    gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixConcat(matrices));
+
+    gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [1, 1, 1, 1]);
+    drawPlane(gamut_program);
+    }
+  }
+
+  // Draw a sphere!
+  let drawSphere = function(pointGamut, pointX, pointY, pointZ) {
+  if (pointGamut.value != 'none') {
+    let testPoint = [Number(pointX.value), Number(pointY.value), Number(pointZ.value)];
+      if (pointGamut.value == 'oklab' || pointGamut.value == 'okhslabish') {
+        testPoint[1] += 0.5;
+        testPoint[2] += 0.5;
+      }
+      gl.uniform1i(gl.getUniformLocation(gamut_program, 'sphere_position_type'), getGamutNumber(pointGamut.value));
+      gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+
+      let matrices = []
+      matrices.push(matrixTranslation(testPoint[0], testPoint[1], testPoint[2]));
+      let radius = 0.025;
+      matrices.push(matrixScale(2*radius, 2*radius, 2*radius));
+      gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixConcat(matrices));
+
+      gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), kSphere);
+      gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_discard'), 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture_xyzd50_lambda);
+
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'), no_slice_vector);
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [1, 1, 1, 1]);
+
+      // drawGrid(gamut_program, kGrid32x32);
+      drawPlane(gamut_program);
+
+      gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+      gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_type'), 0);
+    }
+  };
+  drawSphere(TestPoint0Gamut, TestPoint0X, TestPoint0Y, TestPoint0Z);
+  drawSphere(TestPoint1Gamut, TestPoint1X, TestPoint1Y, TestPoint1Z);
+  drawSphere(TestPoint2Gamut, TestPoint2X, TestPoint2Y, TestPoint2Z);
+
+  gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+  gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_type'), 0);
+
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+
+  if (Polyhedron.checked) {
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), gamut_space);
+    gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [1, 1, 1, 1]);
+    gl.enable(gl.CULL_FACE);
+
+    // HDR
+    gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'), no_slice_vector);
+    gl.uniform1f(gl.getUniformLocation(gamut_program, 'input_hdr_headroom'), 1.0);
+    drawCube(gamut_program, kPolyhedronSolid, 1.0);
+
+    // Wireframe
+    gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [0, 0, 0, 0]);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), gamut_space);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_discard'), 0);
+    gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+
+    // SDR
+    drawCube(gamut_program, kPolyhedronWire, 1.0);
+  }
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+
+  {
+    // Wireframe
+    gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [0, 0, 0, 0]);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), gamut_space);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_discard'), 0);
+    gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+
+    // SDR
+    // - draw when using wireframe
+    // - draw, sliced, when slicing SDR
+    if (GamutRender_Wireframe.checked || RadioSlice_All.checked) {
+      let slice = !GamutRender_Wireframe.checked;
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'),
+                    slice ? flip_slice_vector : no_slice_vector);
+      drawCube(gamut_program, kGrid1x1, 1.0);
+    }
+
+    // HDR
+    let hdr_wire_draw = true;
+    if (ContentHdrHeadroom.value == 1.0 && !GridHiRes.checked) {
+      // When headroom is 1, this is redundant with SDR.
+      hdr_wire_draw = false;
+    }
+    if (GamutRender_Solid.checked) {
+      if (!RadioSlice_HDR.checked && !RadioSlice_All.checked) {
+        hdr_wire_draw = false;
+      }
+    }
+    if (hdr_wire_draw) {
+      let slice = !(GamutRender_Wireframe.checked || GamutRender_SdrSolid_HdrWireframe.checked ||
+                    GamutRender_HdrSolid_SdrWireframe.checked);
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'),
+                    slice ? flip_slice_vector : no_slice_vector);
+
+      gl.uniform1f(gl.getUniformLocation(gamut_program, 'input_hdr_headroom'), ContentHdrHeadroom.value);
+      if (GridHiRes.checked) {
+        drawCube(gamut_program, kGrid16x16, 1.0);
+      } else {
+        drawCube(gamut_program, kGrid1x1, 1.0);
+      }
+      gl.uniform1f(gl.getUniformLocation(gamut_program, 'input_hdr_headroom'), 1.0);
+    }
+  }
+
+  // Draw the spectrum
+  if (!RadioSpectrum_None.checked) {
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'input_position_type'), kWavelength);
+    gl.uniform1i(gl.getUniformLocation(gamut_program, 'gamut_map_discard'), 0);
+    gl.uniformMatrix4fv(gl.getUniformLocation(gamut_program, 'matrixSubModel'), false, matrixIdentity());
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture_xyzd50_lambda);
+
+    if (SliceSpectrum.checked) {
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'), slice_vector);
+    } else {
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'slice_vector'), no_slice_vector);
+    }
+
+    if (RadioSpectrum_Wire.checked) {
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [0, 0, 0, 1]);
+    } else {
+      gl.uniform4fv(gl.getUniformLocation(gamut_program, 'color'), [1, 1, 1, 1]);
+    }
+    drawGrid(gamut_program, kGrid32x8);
+  }
+
+  // Draw the coordinate system.
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  {
+    gl.useProgram(black_program);
+    gl.uniformMatrix4fv(gl.getUniformLocation(black_program, 'matrixProjection'), false,
+                        matrixProjection);
+    gl.uniformMatrix4fv(gl.getUniformLocation(black_program, 'matrixModelView'), false,
+                        matrixModelView);
+    gl.uniform4fv(gl.getUniformLocation(black_program, 'color'), [0.90, 0.90, 0.90, 1.0]);
+    drawCube(black_program, kGrid1x1);
+  }
+}
+
+let draw = function() {
+  canvas.width  = fbo_width;
+  canvas.height = fbo_height;
+  canvas.style = 'width:640px; height:640px; border:1px solid black;';
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  drawToFbo(fbo_width, fbo_height);
+
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.drawBuffers([gl.BACK]);
+
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.BLEND);
+
+  gl.useProgram(blit_program);
+
+  if (1)
+  {
+    let positions = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positions);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+
+    let positionLocation = gl.getAttribLocation(blit_program, 'position');
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(positionLocation);
+
+    let indices = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indices);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0,1,2, 0,2,3]), gl.STATIC_DRAW);
+
+    gl.uniform2fv(gl.getUniformLocation(blit_program, 'viewport'), [640, 480]);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture_color);
+    gl.uniform1i(gl.getUniformLocation(blit_program, 'texture_color'), 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texture_normal);
+    gl.uniform1i(gl.getUniformLocation(blit_program, 'texture_normal'), 1);
+ 
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+  }
+
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+}
+
+
+function doMouseDown(evt) {
+  if (dragging)
+     return;
+  dragging = true;
+  dragging_shift = evt.shiftKey;
+  document.addEventListener("mousemove", doMouseDrag, false);
+  document.addEventListener("mouseup", doMouseUp, false);
+  var box = canvas.getBoundingClientRect();
+  dragging_last_x = window.pageXOffset + evt.clientX - box.left;
+  dragging_last_y = window.pageYOffset + evt.clientY - box.top;
+}
+
+function doMouseDrag(evt) {
+  if (!dragging)
+     return;
+  var box = canvas.getBoundingClientRect();
+  var x = window.pageXOffset + evt.clientX - box.left;
+  var y = window.pageYOffset + evt.clientY - box.top;
+
+  var dx = x - dragging_last_x;
+  var dy = y - dragging_last_y;
+
+  if (dragging_shift) {
+    CameraZ.value = Number(CameraZ.value) + 0.05 * dy;
+  } else {
+    CameraTheta.value = Number(CameraTheta.value) + dx;
+    CameraPhi.value   = Number(CameraPhi.value) + dy;
+  }
+
+  dragging_last_x = x;
+  dragging_last_y = y;
+
+  draw();
+}
+
+function doMouseUp(evt) {
+  if (!dragging) {
+    return;
+  }
+  document.removeEventListener("mousemove", doMouseDrag, false);
+  document.removeEventListener("mouseup", doMouseUp, false);
+  dragging = false;
+}
+
+let makeSpectrum = function() {
+  let texture = gl.createTexture();
+  let width = data_xyzd50_lambda.length / 4;
+  let height = 1;
+
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.FLOAT, data_xyzd50_lambda);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  texture_xyzd50_lambda = texture;
+}
+
+let onChange = function() {
+  ContentHdrHeadroomValue.value = ContentHdrHeadroom.value;
+  DisplayHdrHeadroomValue.value = DisplayHdrHeadroom.value;
+  updateSlice();
+  draw();
+}
+
+let initializeGL = function() {
+  canvas = document.getElementById('Canvas');
+  canvas.addEventListener("mousedown", doMouseDown, false);
+
+  let saveCanvas = function() {
+    draw();
+
+    let mime_type = "image/png";
+    let download_link = document.createElement('a');
+    let data_url = canvas.toDataURL(mime_type);
+ 
+    download_link.download = 'out ' + save_count + '.png';
+    save_count += 1;
+    download_link.href = data_url;
+    download_link.dataset.downloadurl = [mime_type, download_link.download, download_link.href].join(':');
+ 
+    document.body.appendChild(download_link);
+    download_link.click();
+    document.body.removeChild(download_link);
+  }
+  ButtonSave.addEventListener('click', saveCanvas);
+  ButtonAGTM1.addEventListener('change', function(e) {
+    if (ButtonAGTM1.files.length < 1) {
+      return;
+    }
+    let reader = new FileReader();
+    reader.onloadend = function() {
+      let agtm_json = JSON.parse(reader.result);
+      agtm1 = new AgtmToneMapper(gl, agtm_json);
+    }
+    reader.readAsText(ButtonAGTM1.files[0]);
+  });
+  ButtonAGTM2.addEventListener('change', function(e) {
+    if (ButtonAGTM2.files.length < 1) {
+      return;
+    }
+    let reader = new FileReader();
+    reader.onloadend = function() {
+      let agtm_json = JSON.parse(reader.result);
+      agtm2 = new AgtmToneMapper(gl, agtm_json);
+    }
+    reader.readAsText(ButtonAGTM2.files[0]);
+  });
+
+  let warningsText = '';
+  gl = canvas.getContext('webgl2',  {antialias:true});
+  gl.getExtension('EXT_color_buffer_float');
+  if (`drawingBufferStorage` in gl) {
+    gl.drawingBufferStorage(gl.RGBA16F, gl.drawingBufferWidth, gl.drawingBufferHeight);
+  } else {
+    warningsText += 'Experimental WebGL API not found (drawingBufferStorage)!<br>'
+  }
+  if (`configureHighDynamicRange` in canvas) {
+    canvas.configureHighDynamicRange({ mode:'extended' });
+  } else {
+    warningsText += 'Experimental HDR Canvas API not found (configureHighDyanmicRange)!<br>'
+  }
+
+  if (warningsText == '') {
+  } else {
+    warningsText += 'Experimental features missing: Enable "Experimental Web Platform Features" in chrome://flags';
+ 
+    let warnings = document.getElementById('Warnings');
+    warnings.hidden = false;
+    warnings.style = 'color:#BC0000;';
+    warnings.innerHTML = '<strong>' + warningsText + '</strong>';
+
+    // Force fallback to simulated HDR?!?!?
+  }
+
+  {
+    fbo_width = 640;
+    fbo_height = 640;
+
+    texture_color = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture_color);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, fbo_width, fbo_height, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    texture_normal = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture_normal);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, fbo_width, fbo_height, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    renderbuffer_depth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer_depth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_STENCIL, fbo_width, fbo_height);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+    fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture_color, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, texture_normal, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer_depth);
+    if (gl.FRAMEBUFFER_COMPLETE != gl.checkFramebufferStatus(gl.FRAMEBUFFER)) {
+      throw('Incomplete framebuffer');
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  makeSpectrum();
+
+  blit_program = compileShader(gl, blit_vs, blit_fs);
+  black_program = compileShader(gl, black_vs, black_fs);
+  gamut_program = compileShader(gl, gamut_vs, gamut_fs);
+  makePlane();
+  makePolyhedron();
+}
+
+function main() {
+  initializeGL();
+  updateSlice();
+  draw();
+}
+
+</script>
+<body onload='main()'>
+
+<p id='Warnings' hidden=true></p>
+
+<table>
+<tr>
+
+<td style="padding-right: 40px;">
+
+<div id="wrapper">
+  <p id="AxisOrigin" style="user-select:none; position: absolute; width:16px; height:16; z-index:1; text-align:center;">0</p>
+  <p id="Axis0"      style="user-select:none; position: absolute; width:16px; height:16; z-index:1; text-align:center;">R</p>
+  <p id="Axis1"      style="user-select:none; position: absolute; width:16px; height:16; z-index:2; text-align:center;">G</p>
+  <p id="Axis2"      style="user-select:none; position: absolute; width:16px; height:16; z-index:3; text-align:center;">B</p>
+
+<canvas id='Canvas' width='640' height='640'>
+</canvas>
+</div>
+<p><button type="button" id="ButtonSave">Save Canvas</button></p>
+
+</td>
+<td>
+
+<p>
+<b>Gamut</b>
+
+<div>
+<p>
+Gamut volume color space<br>
+
+<input type="radio" name="volume" onchange='onChange();' id="RadioVolume_sRGB">
+<label for="RadioVolume_sRGB">sRGB</label>
+
+<input type="radio" name="volume" onchange='onChange();' id="RadioVolume_P3">
+<label for="RadioVolume_P3">P3</label>
+
+<input type="radio" name="volume" onchange='onChange();' id="RadioVolume_Rec2020" checked>
+<label for="RadioVolume_Rec2020">Rec2020</label>
+
+<input id="Polyhedron" type="checkbox" onchange='onChange();'/>
+<label for="Polyhedron">Polyhedron</label>
+</div>
+
+<div>
+Geometric coordinate color space<br>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_sRGB">
+<label for="RadioGeo_sRGB">sRGB</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_P3">
+<label for="RadioGeo_P3">P3</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_Rec2020">
+<label for="RadioGeo_Rec2020">Rec2020</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_Rec2020YUV" checked>
+<label for="RadioGeo_Rec2020YUV">Rec2020 YUV</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_Rec2100PqYUV">
+<label for="RadioGeo_Rec2100PqYUV">Rec2100 PQ-YUV</label>
+
+<br>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_OkLab">
+<label for="RadioGeo_OkLab">OkLab</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_ICtCpPq">
+<label for="RadioGeo_ICtCpPq">ICtCp-PQ</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_OkHslabish">
+<label for="RadioGeo_OkHslabish">OkHsl-ish</label>
+
+<input type="radio" name="geo" onchange='onChange();' id="RadioGeo_XYZ">
+<label for="RadioGeo_XYZ">XYZD50</label>
+</div>
+</p>
+
+Test point 0:
+<select name="Test0Gamut" id="TestPoint0Gamut" onchange='onChange();'>
+  <option selected value="none">None</option>
+  <option value="srgb">sRGB</option>
+  <option value="p3">Display P3</option>
+  <option value="rec2020">Display Rec2020</option>
+  <option value="rec2020-linear">Rec2020 Linear</option>
+  <option value="rec2020-yuv">Rec2020 YUV</option>
+  <option value="oklab">OkLab</option>
+  <option value="okhslabish">OkHsl-ish</option>
+  <option value="xyzd50">XYZ D50</option>
+</select>
+<input id="TestPoint0X" type="number" value="0.9" style="width:50px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<input id="TestPoint0Y" type="number" value="0.04" style="width:50px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<input id="TestPoint0Z" type="number" value="0.0" style="width:50px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<br>
+
+Test point 1:
+<select name="Test1Gamut" id="TestPoint1Gamut" onchange='onChange();'>
+  <option selected value="none">None</option>
+  <option value="srgb">sRGB</option>
+  <option value="p3">Display P3</option>
+  <option value="rec2020">Display Rec2020</option>
+  <option value="rec2020-linear">Rec2020 Linear</option>
+  <option value="rec2020-yuv">Rec2020 YUV</option>
+  <option value="oklab">OkLab</option>
+  <option value="okhslabish">OkHsl-ish</option>
+  <option value="xyzd51">XYZ D51</option>
+</select>
+<input id="TestPoint1X" type="number" value="0.9" style="width:51px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<input id="TestPoint1Y" type="number" value="0.36" style="width:51px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<input id="TestPoint1Z" type="number" value="0.0" style="width:51px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<br>
+
+Test point 2:
+<select name="Test2Gamut" id="TestPoint2Gamut" onchange='onChange();'>
+  <option selected value="none">None</option>
+  <option value="srgb">sRGB</option>
+  <option value="p3">Display P3</option>
+  <option value="rec2020">Display Rec2020</option>
+  <option value="rec2020-linear">Rec2020 Linear</option>
+  <option value="rec2020-yuv">Rec2020 YUV</option>
+  <option value="oklab">OkLab</option>
+  <option value="okhslabish">OkHsl-ish</option>
+  <option value="xyzd51">XYZ D51</option>
+</select>
+<input id="TestPoint2X" type="number" value="0.4" style="width:51px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<input id="TestPoint2Y" type="number" value="0.36" style="width:51px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+<input id="TestPoint2Z" type="number" value="0.0" style="width:51px;" step=0.01 oninput='onChange();' onchange='onChange();'/>
+
+<p>
+Camera:
+phi:
+<input id="CameraPhi"   type="number" value=13.0 style="width:50px;" step=0.0001 oninput='onChange();' onchange='onChange();'/>
+theta:
+<input id="CameraTheta" type="number" value=-54.0 style="width:50px;" step=0.0001 oninput='onChange();' onchange='onChange();'/>
+z:
+<input id="CameraZ"     type="number" value=4 style="width:50px;" step=0.0001 oninput='onChange();' onchange='onChange();'/>
+fov
+<input id="CameraFov"   type="number" value=5 style="width:50px;" step=0.0001 oninput='onChange();' onchange='onChange();'/>
+</p>
+
+<p>
+<b>HDR</b>
+
+<div>
+<table>
+  <tr>
+    <td>
+      <label for="ContentHdrHeadroom">Content HDR Headroom:</label>
+    </td>
+    <td>
+      <input id="ContentHdrHeadroom" type="range" min="1" max="10" step=0.1 value="1.0" oninput='onChange();' onchange='onChange();'/>
+      <output id="ContentHdrHeadroomValue">1</output>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label for="DisplayHdrHeadroom">Targeted HDR Headroom:</label>
+    </td>
+    <td>
+    <input id="DisplayHdrHeadroom" type="range" min="1" max="10" step=0.1 value="10.0" oninput='onChange();' onchange='onChange();'/>
+    <output style='width:20px;' id="DisplayHdrHeadroomValue">5</output>
+    </td>
+  </tr>
+  <tr>
+    <td style="vertical-align:top;">
+      Tonemap Mode:
+    </td>
+    <td style="vertical-align:top;">
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_ICtCpPq">
+      <label for="RadioToneMapMode_ICtCpPq">ICtCp-Pq</label>
+
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_YCrCb">
+      <label for="RadioToneMapMode_YCrCb">Y'Cr'Cb'</label>
+
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_YRGB">
+      <label for="RadioToneMapMode_YRGB">YRGB</label>
+
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_RpGpBp">
+      <label for="RadioToneMapMode_RpGpBp">R'G'B'</label>
+
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_MaxRGB" checked>
+      <label for="RadioToneMapMode_MaxRGB">maxRGB</label>
+
+      <br>
+
+      <div id="DropAreaAGTM1">
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_AGTM1">
+      AGTM
+      <input  type="file" id="ButtonAGTM1"></input>
+      </div>
+
+      <div id="DropAreaAGTM2">
+      <input type="radio" name="tone_map_mode" onchange='onChange();' id="RadioToneMapMode_AGTM2">
+      AGTM
+      <input  type="file" id="ButtonAGTM2"></input>
+      </div>
+  
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label for="SdrWhiteNits">HDR reference white</label>
+    </td>
+    <td>
+      <input id="SdrWhiteNits" type="number" value=203.0 min="1" max="10000" step= oninput='onChange();' onchange='onChange();'/>
+    </td>
+  </tr>
+</table>
+
+</div>
+</p>
+
+<p>
+<b>Rendering</b>
+<table>
+  <tr>
+    <td>
+      Slicing plane:
+    </td>
+    <td>
+      <label for="SliceAxis">Axis</label>
+      <input id="SliceAxis" type="number" min="0" max="2" value="1" onchange='onChange();'/>
+
+      <label for="SliceValue">Value</label>
+      <input id="SliceValue" type="range" min="0" max="1" step=0.001 value="0.5" oninput='onChange();' onchange='onChange();'/>
+
+      <input id="SliceFlip" type="checkbox" onchange='onChange();'/>
+      <label for="SliceFlip">Flip</label>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      Slice:
+    </td>
+    <td>
+      <input type="radio" name="discard" onchange='onChange();' id="RadioSlice_None" checked>
+      <label for="RadioSlice_None">Nothing</label>
+
+      <input type="radio" name="discard" onchange='onChange();' id="RadioSlice_All">
+      <label for="RadioSlice_All">Everything</label>
+
+      <input type="radio" name="discard" onchange='onChange();' id="RadioSlice_HDR">
+      <label for="RadioSlice_HDR">HDR only</label>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      Slicing plane: 
+    </td>
+    <td>
+      <input type="radio" name="plane" onchange='onChange();' id="RadioPlane_Auto" checked>
+      <label for="RadioPlane_Auto">Auto</label>
+   
+      <input type="radio" name="plane" onchange='onChange();' id="RadioPlane_SDR">
+      <label for="RadioPlane_SDR">SDR</label>
+   
+      <input type="radio" name="plane" onchange='onChange();' id="RadioPlane_HDR">
+      <label for="RadioPlane_HDR">HDR</label>
+   
+      <input type="radio" name="plane" onchange='onChange();' id="RadioPlane_Plane">
+      <label for="RadioPlane_Plane">Full</label>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      Gamut:
+    </td>
+    <td>
+      <input type="radio" name="gamut" onchange='onChange();' id="GamutRender_Wireframe">
+      <label for="GamutRender_Wireframe">Wire</label>
+  
+      <input type="radio" name="gamut" onchange='onChange();' id="GamutRender_SdrSolid_HdrWireframe" checked>
+      <label for="GamutRender_SdrSolid_HdrWireframe">SDR</label>
+  
+      <input type="radio" name="gamut" onchange='onChange();' id="GamutRender_HdrSolid_SdrWireframe" checked>
+      <label for="GamutRender_HdrSolid_SdrWireframe">HDR</label>
+  
+      <input type="radio" name="gamut" onchange='onChange();' id="GamutRender_Solid">
+      <label for="GamutRender_Solid">Both</label>
+  
+      <input id="GridHiRes" type="checkbox" onchange='onChange();'/>
+      <label for="GridHiRes">Hires</label>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      Gamut mapping:
+    </td>
+    <td>
+      <input type="radio" name="gamut_map" onchange='onChange();' id="RadioGamutMap_None" checked>
+      <label for="RadioGamutMap_None">None</label>
+
+      <input type="radio" name="gamut_map" onchange='onChange();' id="RadioGamutMap_CSS">
+      <label for="RadioGamutMap_CSS">CSS</label>
+
+      <input type="radio" name="gamut_map" onchange='onChange();' id="RadioGamutMap_CSS_OPT">
+      <label for="RadioGamutMap_CSS_OPT">CSS (opt)</label>
+
+      <input type="radio" name="gamut_map" onchange='onChange();' id="RadioGamutMap_Clamp">
+      <label for="RadioGamutMap_Clamp">Clamp</label>
+
+      <input type="radio" name="gamut_map" onchange='onChange();' id="RadioGamutMap_L2">
+      <label for="RadioGamutMap_L2">L2</label>
+
+      <input type="radio" name="gamut_map" onchange='onChange();' id="RadioGamutMap_Y">
+      <label for="RadioGamutMap_Y">Y</label>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      Spectral colors:
+    </td>
+    <td>
+      <input type="radio" name="spectrum" onchange='onChange();' id="RadioSpectrum_None" checked>
+      <label for="RadioSpectrum_None">Hide</label>
+
+      <input type="radio" name="spectrum" onchange='onChange();' id="RadioSpectrum_Wire">
+      <label for="RadioSpectrum_Wire">Wire</label>
+
+      <input type="radio" name="spectrum" onchange='onChange();' id="RadioSpectrum_Color">
+      <label for="RadioSpectrum_Color">Color</label>
+
+      <input hidden id="SliceSpectrum" type="checkbox" onchange='onChange();'/>
+      <label hidden for="SliceSpectrum">Slice</label>
+    </td>
+  </tr>
+</table>
+</p>
+
+</td>
+</tr>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,1535 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Adaptive Tone Mapping Demo</title>
+
+<script src="color-helpers/math-helpers.js"></script>
+<script src="color-helpers/color-functions.js"></script>
+<script src="color-helpers/piecewise-cubic.js"></script>
+<script src="color-helpers/agtm-adapt.js"></script>
+<script src="color-helpers/agtm-tone-map-gl.js"></script>
+<script>
+
+let metadata = null;
+let contentTransfer = kTransferPQ;
+let contentPrimaries= kPrimariesRec2020;
+
+let getPercentile = function(p, bins) {
+  let c = 1;
+  for (let b = 0; b < bins.length; ++b) {
+    if (bins[b].cdf_min[c] <= p && p <= bins[b].cdf_max[c]) {
+      let scale = (p - bins[b].cdf_min[c]) / (bins[b].cdf_max[c] - bins[b].cdf_min[c]);
+      return scale * (bins[b].bin_max - bins[b].bin_min) + bins[b].bin_min;
+    }
+  }
+  return 0;
+}
+
+let evalBezier = function(x, x_cp, y_cp) {
+  if (x > x_cp[2]) {
+    return x;
+  }
+  let a_x = x_cp[0] - 2*x_cp[1] + x_cp[2];
+  let b_x = 2*x_cp[1] - 2*x_cp[2];
+  let c_x = x_cp[2];
+  let a_y = y_cp[0] - 2*y_cp[1] + y_cp[2];
+  let b_y = 2*y_cp[1] - 2*y_cp[2];
+  let c_y = y_cp[2];
+  let d = Math.sqrt(b_x*b_x - 4 * a_x * (c_x - x));
+  let t = (-b_x - d) / (2*a_x)
+  return a_y*t*t + b_y*t + c_y;
+}
+
+let evalWhiteSurroundCurve = function(x, metadata) {
+  let wst = metadata.white_surround_transform;
+  if (wst) {
+    return evalBezier(x, [0, wst.x1, wst.x2], [0, wst.y1, wst.x2]);
+  }
+  return x;
+}
+
+let evalWhiteSurroundCurveInverse = function(y, metadata) {
+  let wst = metadata.white_surround_transform;
+  if (wst) {
+    return evalBezier(y, [0, wst.y1, wst.x2], [0, wst.x1, wst.x2]);
+  }
+  return y;
+}
+
+let linearToExtended = function(linear, metadata) {
+  return linear / metadata.hdr_reference_white;
+}
+
+let onMetadataChanged = function() {
+  curve_editor.setMetadata(metadata);
+  hdr_preview.setMetadata(metadata);
+  let json = JSON
+        .stringify(metadata, null, 2)
+        .replace(/(mix": \{)([^}]+)/g,
+                 (_, a, b) => a + b.replace(/\s+/g, ' '))
+        .replace(/("x": )([^m]+)/g,
+                 (_, a, b) => a + b.replace(/\s+/g, ' '));
+  MetadataJSON.value = json;
+
+  if (ComputeStats.checked) {
+    let stats = new ImageStats(image_bitmap);
+    curve_editor.setGainCurveMixHistogram(
+        stats.getDistribution(metadata));
+  }
+}
+
+let logGainToLinearGrad = function(p) {
+  return {xx:1,         xy:0,
+          yx:exp2(p.y), yy:(log(2) * p.x) * exp2(p.y)};
+}
+
+let logGainToLinear = function(p) {
+  let x = p.x;
+  let y = p.x * exp2(p.y);
+  if (`m` in p) {
+    let d_xy = mat2_mvm(logGainToLinearGrad(p), {x:1, y:p.m})
+    return {x:x, y:y, m:d_xy.y / d_xy.x};
+  }
+  return {x:x, y:y}
+}
+
+let linearToLogGain = function(p_linear) {
+  return newtonSolve(logGainToLinear, logGainToLinearGrad, p_linear);
+}
+
+let image_bitmap = null;
+let image_bitmap_source = null;
+var hdr_preview = null;
+let curve_editor = null;
+
+class ImageStats {
+  constructor(video) {
+    this.width = video.width;
+    this.height = video.height;
+    let canvas = new OffscreenCanvas(this.width, this.height);
+    let gl = canvas.getContext('webgl2');
+    let texture = gl.createTexture();
+ 
+    gl.getExtension('EXT_color_buffer_half_float');
+    gl.getExtension('EXT_color_buffer_float');
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA, gl.YES);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, this.width, this.height, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, gl.RGBA, gl.FLOAT, video);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+ 
+    var fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    this.rgb_encoded = new Float32Array(this.width * this.height * 4);
+    gl.readPixels(0, 0, this.width, this.height, gl.RGBA, gl.FLOAT, this.rgb_encoded);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fb);
+  } 
+
+  getDistribution(metadata) {
+    // Convert to linear.
+    let toRelativeLinear = function(data_encoded, metadata) {
+      const N = data_encoded.length / 4;
+      let result = new Float32Array(data_encoded.length);
+      for (let i = 0; i < N; ++i) {
+        const offset = 4*i;
+        let rgb = [data_encoded[offset+0],
+                   data_encoded[offset+1],
+                   data_encoded[offset+2]];
+        for (let c = 0; c < 3; ++c) {
+          rgb[c] = transferFunctionToLinear(data_encoded[offset+c], contentTransfer);
+        }
+        if (contentTransfer == kTransferPQ) {
+          for (let c = 0; c < 3; ++c) {
+            rgb[c] *= 10000 / metadata.hdr_reference_white;
+          }
+        }
+        if (contentTransfer == kTransferHLG) {
+          let Y = 0.2627 * rgb[0] +
+                  0.6780 * rgb[1] +
+                  0.0593 * rgb[2];
+          let Y_to_point2 = Math.pow(Y, 0.2);
+          for (let c = 0; c < 3; ++c) {
+            rgb[c] *= Y_to_point2 * 1000 / metadata.hdr_reference_white;
+          }
+        }
+        for (let c = 0; c < 3; ++c) {
+          rgb[c] = evalWhiteSurroundCurve(rgb[c], metadata);
+        }
+        for (let c = 0; c < 3; ++c) {
+          result[offset+c] = rgb[c];
+        }
+      }
+      return result;
+    }
+
+    let evaluateMix = function(data, mix) {
+      const mix_rgb = mix.rgb;
+      const mix_max = mix.max;
+      const mix_min = mix.min;
+      const mix_channel = mix["channel"];
+      const N = data.length / 4;
+
+      let result = new Float32Array(data.length);
+      for (let i = 0; i < N; ++i) {
+        const offset = 4*i;
+        const rgb = [data[offset+0], data[offset+1], data[offset+2]];
+        const mix_common = mix_rgb[0]  * rgb[0] +
+                           mix_rgb[1]  * rgb[1] +
+                           mix_rgb[2]  * rgb[2] +
+                           mix_max * max(max(rgb[0], rgb[1]), rgb[2]) +
+                           mix_min * min(min(rgb[0], rgb[1]), rgb[2]);
+        for (let c = 0; c < 3; ++c) {
+          result[offset + c] = mix_channel * rgb[c] + mix_common;
+        }
+      }
+      return result;
+    }
+
+    this.rgb_extended_L = toRelativeLinear(this.rgb_encoded, metadata);
+    let toDist = function(data) {
+      let num_bins = 100;
+      let value_min = 0;
+      let value_max = 0.01;
+
+      const N = data.length / 4;
+      for (let i = 0; i < N; ++i) {
+        const offset = 4*i;
+        for (let c = 0; c < 3; ++c) {
+          const value = data[offset+c];
+          if (value < value_min) {
+            value_min = value;
+          }
+          if (value > value_max) {
+            value_max = value;
+          }
+        }
+      }
+
+      let bins = [];
+      for (let b = 0; b < num_bins; ++b) {
+        let bin_min = (value_max - value_min) * ((b+0) / num_bins) + value_min;
+        let bin_max = (value_max - value_min) * ((b+1) / num_bins) + value_min;
+        bins.push({bin_min:bin_min, bin_max:bin_max,
+                   count:[0, 0, 0],
+                   freq:[0, 0, 0],
+                   freq_norm:[0, 0, 0],
+                   cdf_min:[0, 0, 0],
+                   cdf_max:[0, 0, 0]});
+      }
+
+      for (let i = 0; i < N; ++i) {
+        const offset = 4*i;
+        for (let c = 0; c < 3; ++c) {
+          const value = data[offset+c];
+          const bin_index = Math.floor((num_bins - 1) * (value - value_min) / (value_max - value_min));
+          if (bin_index < 0) {
+            console.log(bin_index);
+            console.log(value);
+            console.log('Bins A....');
+          }
+          if (bin_index > bins.length - 1) {
+            console.log(bin_index);
+            console.log(value);
+            console.log('Bins B....');
+          }
+          try {
+            bins[bin_index].count[c] += 1;
+          }
+          catch(err) {
+            console.log('Bad bin index (i, max, min, value)');
+            console.log(bin_index);
+            console.log(value_max);
+            console.log(value_min);
+            console.log(value);
+          }
+        }
+      }
+
+      let freq_max = 0;
+      for (let b = 0; b < num_bins; ++b) {
+        for (let c = 0; c < 3; ++c) {
+          if (b != 0) {
+            bins[b].cdf_min[c] = bins[b-1].cdf_max[c];
+          }
+          bins[b].freq[c] = bins[b].count[c] / N;
+          bins[b].cdf_max[c] = bins[b].cdf_min[c] + bins[b].freq[c];
+          freq_max = max(bins[b].freq[c], freq_max);
+        }
+      }
+      for (let b = 0; b < num_bins; ++b) {
+        for (let c = 0; c < 3; ++c) {
+          bins[b].freq_norm[c] = bins[b].freq[c] / freq_max;
+        }
+      }
+
+      return bins;
+    }
+
+    return toDist(this.rgb_extended_L);
+  }
+}
+
+class CurveEditor {
+  constructor(canvas) {
+    this.curve = null;
+    this.canvas = canvas;
+    this.canvas.width = '1280';
+    this.canvas.height = '720';
+    this.canvas.style = "width:80%; touch-action: none;";
+    this.canvas.editor = this;
+    this.canvas.addEventListener('mousedown', function(e) { this.editor.mouseDown(e); });
+    this.canvas.addEventListener('mouseup', function(e) { this.editor.mouseUpOrLeave(); });
+    this.canvas.addEventListener('mouseleave', function(e) { this.editor.mouseUpOrLeave(); });
+    this.canvas.addEventListener('mousemove', function(e) { this.editor.mouseMove(e); });
+    this.canvas.addEventListener('wheel', function(e) { this.editor.wheel(e); });
+
+    this.context = this.canvas.getContext("2d");
+    this.model_changed_callback = function(param){}
+    this.gain_curve_mix_histogram = null;
+    this.metadata = null;
+    this.altr_index = 0;
+    this.preview_headroom = null;
+ 
+    this.view_offset = {x:80,  y:this.canvas.height - 100};
+    this.view_scale  = {x:100, y:-100};
+ 
+    this.inputModes = document.createElement('p');
+    this.inputModeMoveXYM = InputModeMoveXYM;
+    this.inputModeMoveYM  = InputModeMoveYM
+    this.inputModeAdd     = InputModeAdd;
+    this.inputModeDelete  = InputModeRemove;
+  }
+
+  setGainCurveMixHistogram(h) {
+    this.gain_curve_mix_histogram = h;
+    this.draw();
+  }
+
+  setPreviewHeadroom(h) {
+    this.preview_headroom = h;
+    this.draw();
+  }
+
+  setMetadata(metadata) {
+    if (this.metadata) {
+      if (contentTransfer != contentTransfer ||
+          this.metadata.sdr_adaptation_gain_gamma != metadata.sdr_adaptation_gain_gamma ||
+          /*this.metadata.sdr_adaptation_gain_mix != metadata.sdr_adaptation_gain_mix ||*/
+          this.metadata.sdr_adaptation_scale != metadata.sdr_adaptation_scale /*||
+          this.metadata.gain_curve_mix != metadata.gain_curve_mix*/) {
+        this.gain_curve_mix_histogram = null;
+      }
+    }
+    this.metadata = structuredClone(metadata);
+    this.curve = new PiecewiseCubic(metadata.altr[this.altr_index].curve);
+    this.draw();
+  }
+
+  setAltrIndex(index) {
+    this.altr_index = index;
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Conversion from the model (gain this.curve) to the view (tone map this.curve).
+  linearToViewGrad(p) {
+    return {
+      xx:this.view_scale.x,
+      xy:0,
+      yx:0,
+      yy:this.view_scale.y
+    };
+  }
+  linearToView(p) {
+    let view_x = this.view_offset.x + this.view_scale.x * p.x;
+    let view_y = this.view_offset.y + this.view_scale.y * p.y;
+    if (`m` in p) {
+      let d_xy = mat2_mvm(this.linearToViewGrad(p), {x:1, y:p.m})
+      return {x:view_x, y:view_y, m:d_xy.y / d_xy.x};
+    }
+    return {x:view_x, y:view_y}
+  }
+
+  modelToViewGrad(p) {
+    let p_linear = logGainToLinear(p);
+    return mat2_mm(this.linearToViewGrad(p_linear), logGainToLinearGrad(p));
+  }
+
+  modelToView(p) {
+    return this.linearToView(logGainToLinear(p));
+  }
+
+  viewToModel(p_view, p_model_guess) {
+    // The x coordinate may be computed analytically.
+    let p_model = {x:(p_view.x - this.view_offset.x) / this.view_scale.x};
+
+    // Use Newton iteration to solve for the Y coordinate.
+    if (`y` in p_view) {
+      p_model.y = p_model_guess ? p_model_guess.y : 0;
+      p_model = newtonSolve(
+          (x) => this.modelToView(x),
+          (x) => this.modelToViewGrad(x),
+          p_view,
+          p_model);
+    }
+
+    return p_model;
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Drawing functions.
+  drawGrid() {
+    //this.context.save();
+
+    // Draw dark axes.
+    {
+      let p0 = this.linearToView({x:0, y:0});
+      let p1 = this.linearToView({x:16, y:16});
+
+      this.context.lineWidth = 4;
+      this.context.strokeStyle = 'black';
+      this.context.beginPath();
+      this.context.moveTo(p0.x, p0.y + 20);
+      this.context.lineTo(p0.x, p1.y);
+      this.context.moveTo(p0.x - 20, p0.y);
+      this.context.lineTo(p1.x,      p0.y);
+      this.context.stroke();
+    }
+
+    for (let i = 1; i <= 16; ++i) {
+      let p0 = this.linearToView({x:0, y:0});
+      let pi = this.linearToView({x:i, y:i});
+      let p1 = this.linearToView({x:16, y:16});
+      p1.x = min(p1.x, this.canvas.width);
+      p1.y = max(p1.y, 0);
+
+      this.context.strokeStyle = '#0008';
+      if (i == 1) {
+        this.context.lineWidth = 2;
+      } else {
+        this.context.lineWidth = 1;
+      }
+
+      this.context.beginPath();
+      if (pi.y >= 0 && pi.y <= this.canvas.height) {
+        this.context.moveTo(p0.x, pi.y);
+        this.context.lineTo(p1.x, pi.y);
+      }
+      if (pi.x >= 0 && pi.x <= this.canvas.width) {
+        this.context.moveTo(pi.x, p0.y);
+        this.context.lineTo(pi.x, p1.y);
+      }
+      this.context.stroke();
+
+      this.context.fillStyle = 'black';
+      this.context.font = "20px monospace";
+      this.context.fillText((i).toFixed(0), pi.x - 5, p0.y + 20)
+      this.context.fillText((i).toFixed(0), p0.x - 20, pi.y + 5)
+    }
+
+    if (!this.metadata) {
+      return;
+    }
+
+    {
+      let p = this.linearToView({x:1, y:0});
+      let text = this.metadata.hdr_reference_white + ' nits';
+
+      this.context.fillText(text, p.x - 20, p.y + 40);
+      if (p.x > this.canvas.width / 2) {
+        let drawNits = function(tt, nits) {
+          let x = nits / tt.metadata.hdr_reference_white;
+          console.log('nits:' + nits + ', x:' + x + ' eval:' + evalWhiteSurroundCurve(x, metadata));
+          x = evalWhiteSurroundCurve(x, metadata);
+          let p = tt.linearToView({x:x, y:0});
+          text = nits + ' nits';
+          tt.context.fillText(text, p.x, p.y + 40);
+
+          tt.context.beginPath();
+          tt.context.moveTo(p.x, p.y);
+          tt.context.lineTo(p.x, p.y + 10);
+          tt.context.stroke();
+        }
+        drawNits(this, 1);
+        drawNits(this, 5);
+        drawNits(this, 10);
+        drawNits(this, 25);
+        drawNits(this, 50);
+      }
+    }
+    this.context.restore();
+    this.context.setLineDash([]);
+  }
+  drawIdentity() {
+    this.context.save();
+    this.context.setLineDash([10, 10]);
+    this.context.lineWidth = 2;
+    this.context.strokeStyle = '#0008';
+
+    let x0 = this.view_offset.x;
+    let y0 = this.view_offset.y;
+    let x1 = this.view_offset.x + this.view_scale.x * 16;
+    let y1 = this.view_offset.y + this.view_scale.y * 16;
+
+    this.context.beginPath();
+    this.context.moveTo(x0, y0);
+    this.context.lineTo(x1, y1);
+    this.context.stroke();
+
+    this.context.restore();
+  }
+  drawHistogram() {
+    if (this.gain_curve_mix_histogram == null) {
+      return;
+    }
+    this.context.globalCompositeOperation = "lighter";
+    let scale_y = -this.view_offset.y + 20;
+    
+    let bins = this.gain_curve_mix_histogram;
+    for (let c = 0; c < 3; ++c) {
+      this.context.beginPath();
+      this.context.lineWidth = 2;
+      if (c == 0)  {
+        this.context.strokeStyle = '#FF202020';
+        this.context.fillStyle =   '#FF202020';
+      } else if (c == 1) {
+        this.context.strokeStyle = '#20FF2020';
+        this.context.fillStyle =   '#20FF2020';
+      } else if (c == 2) {
+        this.context.strokeStyle = '#2020FF20';
+        this.context.fillStyle =   '#2020FF20';
+      }
+
+      this.context.moveTo(this.view_offset.x, this.view_offset.y);
+      for (let b = 0; b < bins.length; ++b) {
+        let y0 = this.view_offset.y + scale_y * bins[b].cdf_min[c];
+        let y1 = this.view_offset.y + scale_y * bins[b].cdf_max[c];
+        let x0 = this.view_offset.x + this.view_scale.x * bins[b].bin_min;
+        let x1 = this.view_offset.x + this.view_scale.x * bins[b].bin_max;
+        this.context.lineTo(x0, y0);
+        this.context.lineTo(x1, y1);
+        if (b == bins.length - 1) {
+          this.context.lineTo(x1, this.view_offset.y);
+        }
+      }
+      this.context.lineTo(this.view_offset.x, this.view_offset.y);
+      this.context.closePath();
+      this.context.fill();
+      this.context.stroke();
+    }
+    this.context.globalCompositeOperation = "source-over";
+
+    this.context.strokeStyle = '#FFFFFF80';
+    let percentiles = [0.5, 0.75, 0.9, 0.95, 0.99];
+    for (let i = 0; i < percentiles.length; ++i) {
+      for (let c = 0; c < 3; ++c) {
+        let y = percentiles[i];
+        let x = getPercentile(y, bins);
+
+        let y0 = this.view_offset.y + scale_y * y;
+        let y1 = this.view_offset.y + 0.0;
+        let x0 = this.view_offset.x + this.view_scale.x * x;
+
+        this.context.beginPath();
+        this.context.lineWidth = 2;
+        this.context.moveTo(x0, y0);
+        this.context.lineTo(x0, y1);
+        this.context.stroke();
+
+        this.context.fillStyle = 'black';
+        this.context.font = "20px monospace";
+        this.context.fillText((100*y).toFixed(0) + '%', x0 - 15, y0)
+      }
+    }
+  }
+  drawCurve(altr_min, w_min, altr_max, w_max, headroom, color) {
+    if (altr_max == null) {
+      headroom = altr_min.headroom;
+    }
+
+    let curve_min = new PiecewiseCubic(altr_min.curve);
+    let curve_max = altr_max ? new PiecewiseCubic(altr_max.curve) : null;
+
+    this.context.save();
+
+    // Draw control points only if a single curve was requested.
+    if (altr_max == null) {
+      this.context.strokeStyle = color + 'FF';
+      this.context.fillStyle = color + 'FF';
+      for (let i = 0; i < curve_min.control_points.length; ++i) {
+        let xym = this.modelToView(curve_min.control_points[i])
+ 
+        this.context.beginPath();
+        this.context.arc(xym.x, xym.y, 8, 0, 2 * Math.PI);
+        this.context.fill();
+        this.context.lineWidth = 0;
+        this.context.stroke();
+  
+        this.context.beginPath();
+        this.context.lineWidth = 4;
+        this.context.moveTo(xym.x - 25, xym.y - 25*xym.m);
+        this.context.lineTo(xym.x + 25, xym.y + 25*xym.m);
+        this.context.stroke();
+      }
+    }
+
+    // Draw the curve itself (potentially interpolating between curve_min and curve_max).
+    this.context.beginPath();
+    this.context.lineWidth = 4;
+    this.context.strokeStyle = color + 'A0';
+    for (let v_x = this.view_offset.x; v_x < this.canvas.width; v_x += 2) {
+      let x = this.viewToModel({x:v_x}).x;
+      let y = w_min * curve_min.evaluate(x).y;
+      if (altr_max != null) {
+        y += w_max * curve_max.evaluate(x).y;
+      }
+      let p = this.modelToView({x:x, y:y});
+      if (x == 0) {
+        this.context.moveTo(p.x, p.y);
+      } else {
+        this.context.lineTo(p.x, p.y);
+      }
+    }
+    this.context.stroke();
+
+    // Draw the headroom we are targeting.
+    {
+      let x0 = this.view_offset.x;
+      let x1 = this.canvas.width;
+      let y = this.view_offset.y + this.view_scale.y * exp2(headroom);
+      this.context.setLineDash([10, 10]);
+      this.context.beginPath();
+      this.context.moveTo(x0, y);
+      this.context.lineTo(x1, y);
+      this.context.stroke();
+    }
+    this.context.restore();
+
+  }
+  drawInterpolatedCurve(headroom, color) {
+    let adaptation = AgtmAdapt(this.metadata, headroom);
+    this.drawCurve(this.metadata.altr[adaptation.i], adaptation.weight_i,
+                   this.metadata.altr[adaptation.j], adaptation.weight_j,
+                   headroom, color);
+  }
+  draw() {
+    this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    this.drawGrid();
+    this.drawHistogram();
+    this.drawIdentity();
+    if (this.metadata) {
+      if (this.preview_headroom != null) {
+        this.drawInterpolatedCurve(this.preview_headroom, '#00FF00');
+      }
+      for (let i = 0; i < this.metadata.altr.length; ++i) {
+        this.drawCurve(this.metadata.altr[i], 1.0, null, 0.0, null, i == this.altr_index ? '#FF0000' : '#808080');
+      }
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Event handling
+  onModelChanged() {
+    this.metadata.altr[this.altr_index].curve = this.curve.getControlPoints();
+    this.model_changed_callback(this.metadata);
+  }
+
+  getViewPoint(e) {
+    const rect = this.canvas.getBoundingClientRect()
+    return {x:(event.clientX - rect.left) * this.canvas.width / rect.width,
+            y:(event.clientY - rect.top) * this.canvas.height / rect.height};
+  }
+  getControlPointIndex(view_point) {
+    let best_dist = null;
+    let best_index = null;
+    for (let i = 0; i < this.curve.control_points.length; ++i) {
+      let view_point_i = this.modelToView(this.curve.control_points[i]);
+      let dist = vec2_dist(view_point_i, view_point);
+      if (best_dist == null || dist < best_dist) {
+        best_index = i;
+        best_dist = dist;
+      }
+    }
+    if (best_dist > 12*12) {
+      return null;
+    }
+    return best_index;
+  }
+  mouseDown(e) {
+    let view_point = this.getViewPoint(e);
+    let index = this.getControlPointIndex(view_point);
+    if (this.inputModeDelete.checked) {
+      this.curve.remove(index);
+      this.onModelChanged();
+    }
+    if (this.inputModeAdd.checked) {
+      let model_point = this.viewToModel({x:view_point.x});
+      this.curve.insert(model_point.x);
+      this.onModelChanged();
+    }
+    if (this.inputModeMoveXYM.checked || this.inputModeMoveYM.checked) {
+      this.drag_index = index;
+      this.drag_view_point = view_point;
+      return;
+    }
+    this.draw();
+  }
+  mouseMove(e) {
+    let view_delta = null;
+    {
+      let view_old = this.drag_view_point;
+      this.drag_view_point = this.getViewPoint(e);
+      if (!view_old) {
+        return;
+      }
+      view_delta = vec2_sub(this.drag_view_point, view_old);
+    }
+    if (e.buttons != 1) {
+      return;
+    }
+    if (!this.inputModeMoveXYM.checked && !this.inputModeMoveYM.checked) {
+      return;
+    }
+    if (this.drag_index == null) {
+      return;
+    }
+    let model_old = this.curve.control_points[this.drag_index];
+    let view_old = this.modelToView(model_old);
+    let view_new = view_old;
+
+    if ((this.inputModeMoveYM.checked && e.shiftKey) ||
+        (this.inputModeMoveXYM.checked && e.shiftKey)) {
+      view_new = structuredClone(view_old);
+      view_new.m += 0.01 * view_delta.y;
+    } else {
+      view_new = vec2_add(view_old, view_delta);
+      if (this.inputModeMoveYM.checked) {
+        view_new.x = view_old.x;
+      }
+      view_new.m = view_old.m;
+    }
+    if (view_new != view_old) {
+      let model_new = this.viewToModel(view_new, model_old);
+      this.curve.control_points[this.drag_index] = model_new;
+      this.onModelChanged();
+      this.draw();
+    }
+  }
+  wheel(e) {
+    e.preventDefault();
+    if (e.ctrlKey) {
+      this.view_scale.x *= exp2(e.deltaY * -0.02);
+      this.view_scale.y *= exp2(e.deltaY * -0.02);
+    } else {
+      if (e.shiftKey) {
+        this.view_scale.x *= exp2(e.deltaX * -0.01);
+      } else {
+        this.view_scale.y *= exp2(e.deltaY *  0.01);
+      }
+    }
+    this.draw();
+  }
+  mouseUpOrLeave() {
+    this.drag_index = null;
+  }
+}
+
+const vs = `#version 300 es
+            precision highp float;
+            in vec2 position;
+            out vec2 texcoord;
+            void main() {
+              texcoord = vec2(0.5+0.5*position.x, 0.5-0.5*position.y);
+              gl_Position = vec4(position, 0.0, 1.0);
+            }`;
+
+const fs = `#version 300 es
+  precision highp float;
+  uniform sampler2D content;
+  uniform int texture_trfn;
+  uniform int texture_primaries;
+  uniform int framebuffer_trfn;
+  uniform int framebuffer_primaries;
+  uniform int white_surround;
+  in vec2 texcoord;
+  out vec4 fragColor;
+
+  uniform float target_log2_headroom;
+
+  uniform float hdr_reference_white;
+
+  ` + kColorFunctionGLSL + `
+  ` + kAgtmToneMapperGLSL + `
+
+  vec3 ApplyOetfInv(vec3 x, int transfer) {
+    return vec3(sign(x[0]) * transferToLinear(abs(x[0]), transfer),
+                sign(x[1]) * transferToLinear(abs(x[1]), transfer),
+                sign(x[2]) * transferToLinear(abs(x[2]), transfer));
+  }
+  vec3 ApplyOetf(vec3 x, int transfer) {
+    return vec3(sign(x[0]) * transferFromLinear(abs(x[0]), transfer),
+                sign(x[1]) * transferFromLinear(abs(x[1]), transfer),
+                sign(x[2]) * transferFromLinear(abs(x[2]), transfer));
+  }
+
+  vec3 ApplyOotf(vec3 rgb, int primaries, int transfer) {
+    if (transfer != kTransferHLG) {
+      return rgb;
+    }
+    rgb = primariesConvert(rgb, primaries, kPrimariesRec2020);
+    float Y = 0.2627 * rgb.r + 0.6780 * rgb.g + 0.0593 * rgb.b;
+    rgb *= pow(Y, 0.2);
+    rgb = primariesConvert(rgb, kPrimariesRec2020, primaries);
+    return rgb;
+  }
+
+  void main() {
+    fragColor.a = 1.0;
+
+    vec3 rgb = texture(content, texcoord).rgb;
+    rgb = ApplyOetfInv(rgb, texture_trfn);
+
+    rgb = ApplyOotf(rgb, texture_primaries, texture_trfn);
+
+    if (texture_trfn == kTransferHLG) {
+      rgb *= 1000.0 / hdr_reference_white;
+    }
+    if (texture_trfn == kTransferPQ) {
+      rgb *= 10000.0 / hdr_reference_white;
+    }
+
+    /*
+    for (int c = 0; c < 3; ++c) {
+      if (rgb[c] < 1.0) {
+        rgb[c] = EvaluateCurveTex(rgb[c], kCurveCount-2.0);
+      }
+    }
+
+    if (white_surround == 0) {
+      for (int c = 0; c < 3; ++c) {
+        if (rgb[c] < 1.0) {
+          rgb[c] = EvaluateCurveTex(rgb[c], kCurveCount-1.0);
+        }
+      }
+    }
+    */
+
+    // Convert to gain application color space.
+    rgb = primariesConvert(rgb, texture_primaries, gain_application_space_primaries);
+
+    // Apply gain curve.
+    rgb = AgtmToneMap(rgb, texture_primaries);
+
+    // Convert to the framebuffer encoding.
+    rgb = primariesConvert(rgb, gain_application_space_primaries, framebuffer_primaries);
+    rgb = ApplyOetf(rgb, framebuffer_trfn);
+    rgb = clamp(rgb, 0.0, exp2(target_log2_headroom));
+    fragColor.rgb = rgb;
+  }`;
+
+let compileShader = function(gl, vertex_source, fragment_source) {
+  let vertex_shader = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vertex_shader, vertex_source);
+  gl.compileShader(vertex_shader);
+  if (!gl.getShaderParameter(vertex_shader, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(vertex_shader));
+     
+  let fragment_shader = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fragment_shader, fragment_source); 
+  gl.compileShader(fragment_shader);
+  if (!gl.getShaderParameter(fragment_shader, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(fragment_shader));
+  
+  let program = gl.createProgram();
+  gl.attachShader(program, vertex_shader);
+  gl.attachShader(program, fragment_shader);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(program));
+
+  return program;
+}
+
+// https://stackoverflow.com/questions/5916900/how-can-you-detect-the-version-of-a-browser
+let browserVersion = function(){
+    var ua= navigator.userAgent;
+    var tem; 
+    var M= ua.match(/(opera|chrome|safari|firefox|msie|trident(?=\/))\/?\s*(\d+)/i) || [];
+    if(/trident/i.test(M[1])){
+        tem=  /\brv[ :]+(\d+)/g.exec(ua) || [];
+        return 'IE '+(tem[1] || '');
+    }
+    if(M[1]=== 'Chrome'){
+        tem= ua.match(/\b(OPR|Edge)\/(\d+)/);
+        if(tem!= null) return tem.slice(1).join(' ').replace('OPR', 'Opera');
+    }
+    M= M[2]? [M[1], M[2]]: [navigator.appName, navigator.appVersion, '-?'];
+    if((tem= ua.match(/version\/(\d+)/i))!= null) M.splice(1, 1, tem[1]);
+    return M;
+};
+
+let agtm_json = `
+{
+	"hdr_reference_white": 100,
+	"baseline_hdr_headroom": 2.300448,
+	"baseline_max_component": 4.926108,
+	"gain_application_space_primaries": 9,
+	"gain_application_offset": 0,
+	"gain_min":-2.300448,
+	"gain_span":2.300448,
+  "alternates":[
+    {
+      "hdr_headroom":0.0,
+	    "component_mix_params": { "max": 1.0 },
+      "piecewise_cubic": {
+        "m_min":-0.989021,
+        "m_span":0.989021,
+        "control_points":[
+          {"x":0.203000, "y":0.565302, "m":1.000000},
+          {"x":0.253750, "y":0.532275, "m":0.036706},
+          {"x":0.355250, "y":0.429329, "m":0.000000},
+          {"x":0.507500, "y":0.294010, "m":0.198370},
+          {"x":0.812000, "y":0.094438, "m":0.445995},
+          {"x":1.000000, "y":0.000000, "m":0.532752}
+        ]
+      }
+    },
+    {
+      "hdr_headroom":1.169925,
+	    "component_mix_params": { "max": 1.0 },
+      "piecewise_cubic": {
+        "m_min":-0.828016,
+        "m_span":0.828016,
+        "control_points":[
+          {"x":0.203000, "y":1.000000, "m":1.000000},
+          {"x":0.253750, "y":0.976911, "m":0.143130},
+          {"x":0.355250, "y":0.894517, "m":0.000000},
+          {"x":0.507500, "y":0.777606, "m":0.152303},
+          {"x":0.812000, "y":0.596632, "m":0.387779},
+          {"x":1.000000, "y":0.508564, "m":0.475600}
+        ]
+      }
+    }
+  ]
+}
+`;
+
+class AdaptiveGtmRenderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.framebuffer_transfer = kTransferSRGB;
+    this.framebuffer_primaries = kPrimariesP3;
+    this.framebuffer_log2_headroom = 0;
+    // Set default metadata to render the video as sRGB.
+    this.metadata = null;
+ 
+    this.gl = this.canvas.getContext('webgl2');
+    this.gl.getExtension('EXT_color_buffer_half_float');
+    this.gl.getExtension('EXT_color_buffer_float');
+    this.program = compileShader(this.gl, vs, fs);
+    if (`drawingBufferColorSpace` in this.gl) {
+      this.gl.drawingBufferColorSpace = 'display-p3';
+      this.framebuffer_primaries = kPrimariesP3;
+    } else {
+      this.framebuffer_primaries = kPrimariesSRGB;
+    }
+
+
+    let warningsText = '';
+    let v = browserVersion();
+    if (v[0] == 'Chrome' && v[1] < 131) {
+      warningsText = 'Chrome Version <131 has bugs importing HDR video to WebGL. Use Chrome Canary.';
+    }
+
+    try {
+      this.canvas.configureHighDynamicRange({ mode:'extended' /*, agtm:agtm_json */ });
+    } catch(err) {
+      let warningsText = 'Missing experimental feature configureHighDynamicRange!!!<br>Enable "Experimental Web Platform Features" in chrome://flags';
+    }
+
+    if (warningsText != '') {
+      Warnings.hidden = false;
+      Warnings.style = 'color:#BC0000;';
+      Warnings.innerHTML = '<strong>' + warningsText + '</strong>';
+    }
+  }
+
+  setHeadroomLog2(value) {
+    this.framebuffer_log2_headroom = value;
+    this.draw();
+  }
+  setMetadata(metadata) {
+    this.metadata = metadata;
+    this.agtm = new AgtmToneMapper(this.gl, this.metadata);
+    this.draw();
+  }
+  resizeFramebuffer(w, h) {
+    this.fb_w = Math.round(2*w);
+    this.fb_h = Math.round(2*h);
+    let gl = this.gl;
+    if (gl) {
+      try {
+        gl.drawingBufferStorage(gl.RGBA16F, this.fb_w, this.fb_h);
+      } catch (err) {
+        this.canvas.width = this.fb_w;
+        this.canvas.height = this.fb_h;
+      }
+      gl.viewport(0, 0, this.fb_w, this.fb_h);
+    }
+    this.draw();
+  }
+  setImage(image) {
+    let gl = this.gl;
+    let reallocate = (this.tex_w != image.width || this.tex_h != image.height);
+    if (reallocate) {
+      this.tex = gl.createTexture();
+      this.tex_w = image.width;
+      this.tex_h = image.height;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    if (reallocate) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, this.tex_w, this.tex_h, 0, gl.RGBA, gl.FLOAT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+    }
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.tex_w, this.tex_h, gl.RGBA, gl.FLOAT, image);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+  draw() {
+    let gl = this.gl;
+
+    if (!this.tex) {
+      gl.clearBufferfv(gl.COLOR, 0, [0.5, 0.5, 0.5, 1.0]);
+      return;
+    }
+
+    gl.useProgram(this.program);
+ 
+    gl.clearBufferfv(gl.COLOR, 0, [0.5, 0.5, 0.5, 1.0]);
+
+    let vertices = gl.createBuffer();
+    let indices = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertices);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indices);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0,1,2, 0,2,3]), gl.STATIC_DRAW);
+ 
+    let positionLocation = gl.getAttribLocation(this.program, 'position');
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(positionLocation);
+ 
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'content'), 0);
+
+    gl.uniform1i(gl.getUniformLocation(this.program, 'framebuffer_trfn'), this.framebuffer_transfer);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'framebuffer_primaries'), this.framebuffer_primaries);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'target_log2_headroom'), this.framebuffer_log2_headroom);
+
+ 
+    gl.uniform1i(gl.getUniformLocation(this.program, 'texture_trfn'),
+                 contentTransfer);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'texture_primaries'),
+                 contentPrimaries);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'white_surround'),
+                 WhiteSurroundTransform.checked);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'hdr_reference_white'),
+                 this.metadata.hdr_reference_white);
+
+    this.agtm.setUniforms(this.framebuffer_log2_headroom, this.program, 1);
+ 
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+  }
+}
+
+
+let resize = function() {
+  if (image_bitmap_source != MyImage &&
+      image_bitmap_source != MyVideo) {
+    return;
+  }
+
+  if (NativeRendering.checked) {
+    NativeLabel.hidden = false;
+    MyImage.hidden = image_bitmap_source != MyImage;
+    MyVideo.hidden = image_bitmap_source != MyVideo ;   
+    PreviewHDRLabel.hidden = true;
+    PreviewHDR.hidden = true;
+  } else {
+    NativeLabel.hidden = true;
+    MyImage.hidden = true;
+    MyVideo.hidden = true;
+    PreviewHDRLabel.hidden = false;
+    PreviewHDR.hidden = false;
+  }
+  TimeSliderTable.hidden = image_bitmap_source != MyVideo;
+
+  let width  = 0.48 * window.innerWidth;
+  let height = 0.80 * window.innerHeight;
+
+  let aspect = 1280 / 720;
+  if (image_bitmap) {
+    aspect = image_bitmap.width / image_bitmap.height;
+  }
+  if (`videoWidth` in image_bitmap_source) {
+    aspect = image_bitmap_source.videoWidth / image_bitmap_source.videoHeight;
+  }
+  if (width / aspect > height) {
+    width = height * aspect;
+  } else {
+    height = width / aspect;
+  }
+  let s = 'width:' + Math.round(width) + 'px;' +
+          'height:' + Math.round(height) + 'px;'
+  MyVideo.style = s;
+  MyImage.style = s;
+  PreviewHDR.style = s;
+  hdr_preview.resizeFramebuffer(width, height);
+
+  let size = Math.round(width);
+  if (aspect < 1) {
+    size = Math.round(height);
+  }
+  s = 'width:' + Math.round(size) + 'px;' +
+      'height:' + Math.round(size) + 'px;'
+  CurveEditorCanvas.style = s;
+  if (curve_editor) {
+    CurveEditorCanvas.width = 2*size;
+    CurveEditorCanvas.height = 2*size;
+    curve_editor.view_offset.y = 2*size - 60;
+    curve_editor.draw();
+  }
+}
+
+let onImageBitmapSource = function(source, w, h) {
+  image_bitmap_source = source;
+  options = {colorSpaceConversion:"none"};
+  if (w != null) {
+    options = { colorSpaceConversion:"none", premultiplyAlpha:"premultiply" };
+  }
+  createImageBitmap(image_bitmap_source, options).then((new_image_bitmap) => {
+    if (image_bitmap) {
+      image_bitmap.close();
+    }
+    image_bitmap = new_image_bitmap;
+    resize();
+
+    hdr_preview.setImage(image_bitmap);
+    hdr_preview.draw();
+ 
+    if (ComputeStats.checked) {
+      let stats = new ImageStats(image_bitmap);
+      curve_editor.setGainCurveMixHistogram(
+          stats.getDistribution(metadata));
+    }
+  });
+}
+
+let onFrame = function(now, frame_metadata) {
+  MyVideo.requestVideoFrameCallback(onFrame);
+
+  TimeSlider.max = MyVideo.duration;
+  TimeSliderValue.max = MyVideo.duration;
+  TimeSlider.value = MyVideo.currentTime;
+  TimeSliderValue.value = Number(TimeSlider.value).toLocaleString('fullwide', {
+      minimumFractionDigits:3,
+      maximumFractionDigits:3,
+      minimumIntegerDigits:3});
+
+  onImageBitmapSource(MyVideo, MyVideo.videoWidth, MyVideo.videoHeight);
+}
+
+function onFile(name, f) {
+  let video_file = null;
+  let image_file = null;
+  let json_file = null;
+
+  let extension = name.split('.').pop();
+  if (extension == 'json') {
+    json_file = f;
+  } else if (extension == 'avif' ||
+             extension == 'png' ||
+             extension == 'jpg' ||
+             extension == 'heic' ||
+             extension == 'heif' ||
+             extension == 'jpeg') {
+    image_file = f;
+  } else {
+    video_file = f;
+  }
+  if (video_file) {
+    let reader = new FileReader();
+    reader.onloadend = function() {
+      let url = reader.result;
+      MyVideo.src = url;
+      MyVideo.requestVideoFrameCallback(onFrame);
+    }
+    reader.readAsDataURL(video_file)
+  }
+  if (image_file) {
+    let reader = new FileReader();
+    reader.onloadend = function() {
+      let url = reader.result;
+      MyImage.onload = function() {
+        onImageBitmapSource(MyImage);
+      }
+      MyImage.src = url;
+      MyVideo.src;
+    }
+    reader.readAsDataURL(image_file)
+  }
+  if (json_file) {
+    let reader = new FileReader();
+    reader.onloadend = function() {
+      metadata = JSON.parse(reader.result);
+      onMetadataChanged();
+    }
+    reader.readAsText(json_file)
+  }
+}
+
+function onFileList(files) {
+  event.preventDefault();
+  console.log(files);
+  let video_file = null;
+  let image_file = null;
+  let json_file = null;
+  for (const f of files) {
+    onFile(f.name, f);
+  }
+}
+
+let fetchFile = function(filename) {
+  const myRequest = new Request(filename);
+  fetch(myRequest)
+    .then((response) => response.blob())
+    .then((myBlob) => {
+      onFile(filename, myBlob);
+    });
+}
+
+let main = function() {
+  window.onresize = function(event) {
+    resize();
+  };
+  hdr_preview = new AdaptiveGtmRenderer(PreviewHDR);
+  curve_editor = new CurveEditor(CurveEditorCanvas);
+
+  hdr_preview.setHeadroomLog2(Number(PreviewHdrHeadroomSlider.value));
+  curve_editor.setPreviewHeadroom(Number(PreviewHdrHeadroomSlider.value));
+
+
+  SignalTransfer.addEventListener('change', function (e) {
+    contentTransfer = Number(SignalTransfer.value);
+    onMetadataChanged();
+  });
+  SignalPrimaries.addEventListener('change', function (e) {
+    contentPrimaries = Number(SignalPrimaries.value);
+    onMetadataChanged();
+  });
+  Content.addEventListener('change', function (e) {
+    let loadContent = function(a, b, c, d) {
+      contentTransfer = c;
+      SignalTransfer.value = c;
+      contentPrimaries = d;
+      SignalPrimaries.value = d;
+
+      fetchFile(a);
+      fetchFile(b); 
+    };
+    if (Content.value == 0)
+      loadContent('demo.avif', 'demo.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 1)
+      loadContent('bmw-pq.png', 'demo.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 2)
+      loadContent('cairoli-av1.mp4', 'cairoli.json', kTransferHLG, kPrimariesRec2020);
+  });
+  Metadata.addEventListener('change', function (e) {
+    if (Content.value == 1)
+      fetchFile('lut3d-with.json');
+    if (Content.value == 2)
+      fetchFile('lut3d-without.json');
+  });
+  ComputeStats.addEventListener('click', function(e) {
+    if (ComputeStats.checked) {
+      let stats = new ImageStats(image_bitmap);
+      curve_editor.setGainCurveMixHistogram(
+          stats.getDistribution(metadata));
+    } else {
+      curve_editor.setGainCurveMixHistogram(null);
+    }
+  });
+
+  PlayPause.addEventListener('click', function(e) {
+    if (MyVideo.paused) {
+      MyVideo.play();
+    } else {
+      MyVideo.pause();
+    }
+  });
+
+  document.body.addEventListener('drop', function (e) {
+    e.preventDefault();
+    onFileList(e.dataTransfer.files);
+  });
+  document.body.addEventListener('dragover', function (e) {
+    e.preventDefault();
+  });
+
+  MetadataJSON.addEventListener('change', function (e) {
+    metadata = JSON.parse(MetadataJSON.value);
+    onMetadataChanged();
+  });
+  MetadataJSON.addEventListener('change', function (e) {
+    metadata = JSON.parse(MetadataJSON.value);
+    onMetadataChanged();
+  });
+  curve_editor.model_changed_callback = function(editor_metadata) {
+    metadata = editor_metadata;
+    onMetadataChanged();
+  }
+  AltrIndex.addEventListener('change', function (e) {
+    curve_editor.setAltrIndex(Number(AltrIndex.value));
+    onMetadataChanged();
+  });
+  TimeSlider.addEventListener('input', function(e) {
+    console.log(TimeSlider.value);
+    MyVideo.currentTime = Number(TimeSlider.value);
+  }, false);
+  TimeSliderValue.addEventListener('change', function(e) {
+    MyVideo.currentTime = TimeSliderValue.value;
+  }, false);
+  PreviewHdrHeadroomSlider.addEventListener('input', function(e) {
+    let value = Number(PreviewHdrHeadroomSlider.value);
+    hdr_preview.setHeadroomLog2(value);
+    curve_editor.setPreviewHeadroom(value);
+    PreviewHdrHeadroomSliderValue.innerText = value.toFixed(2);
+  }, false);
+
+  LumSatSlider.addEventListener('input', function(e) {
+    let value = Number(LumSatSlider.value);
+    for (let i = 0; i < metadata.altr.length; ++i) {
+      let mix = metadata.altr[i].mix;
+      mix.rgb[0] = 0;
+      mix.rgb[0] = 0;
+      mix.rgb[0] = 0;
+      mix.max = value;
+      mix.min = 0;
+      mix.channel = 1 - value;
+    }
+    onMetadataChanged();
+  }, false);
+
+  let updateColors = function() {
+    document.body.style.color = Foreground.value;
+    document.body.style.background = Background.value;
+    ['p', 'select', 'input', 'textarea'].forEach(function(item,index) {
+      document.querySelectorAll(item).forEach(e => e.style.color = Foreground.value);
+      document.querySelectorAll(item).forEach(e => e.style.backgroundColor = Background.value);
+    });
+  }
+  Background.addEventListener('change', function (e) { updateColors(); });
+  Foreground.addEventListener('change', function (e) { updateColors(); });
+  NativeRendering.addEventListener('change', function (e) { resize(); });
+  
+  WhiteSurroundTransform.addEventListener('change', function (e) {
+    hdr_preview.draw();
+  });
+
+  UploadButton.addEventListener('change', function(e) {
+    onFileList(UploadButton.files);
+  });
+  UploadButtonFake.addEventListener('click', function() {
+    UploadButton.click();
+  });
+
+
+  // Configure the HDR screen info.
+  {
+    async function screenDetails() {
+      const screens = await window.getScreenDetails();
+      const s = screens.currentScreen;
+      function updateCurrentScreenInfo(s) {
+        if (!QueryScreen.checked) {
+          return;
+        }
+        if (`highDynamicRangeHeadroom` in s) {
+          let h = log2(Number(s.highDynamicRangeHeadroom));
+          PreviewHdrHeadroomSlider.value = h;
+          PreviewHdrHeadroomSliderValue.innerText = h.toFixed(2);
+          hdr_preview.setHeadroomLog2(h);
+          curve_editor.setPreviewHeadroom(h);
+        }
+      }
+      updateCurrentScreenInfo(s);
+      screens.addEventListener('currentscreenchange', (event) => {
+        updateCurrentScreenInfo(s);
+      });
+    }
+    QueryScreen.addEventListener('click', screenDetails);
+  }
+
+  fetchFile('demo.avif');
+  fetchFile('demo.json');
+}
+</script>
+</head>
+<body onload="main();" style="dynamic-range-limit:dynamic-range-limit-mix(standard 0%, constrained 0%, no-limit 100%);">
+
+<p id="Warnings" hidden></p>
+
+<table style="width:100%; text-align:center; border:1px;">
+<tr>
+  <td>
+    <p style='text-align:center;'>
+      <input  type="file"   id="UploadButton" style="display:none">
+      <button type="button" id="UploadButtonFake">Upload Image</button>
+    <label for="Content">Content</label>
+    <select name="Content" id="Content">
+      <option value=0 checked>Cow (default)</option>
+      <option value=1>BMW</option>
+      <option value=2>Cairoli</option>
+    </select>
+    <label for="Metadata">Metadata</label>
+    <select name="Metadata" id="Metadata">
+      <option value=0 checked>default</option>
+      <option value=1>Lut3D-with</option>
+      <option value=2>Lut3D-without</option>
+    </select>
+    </p>
+
+
+    <p id="NativeLabel" hidden>Native Rendering</p>
+    <video id="MyVideo" style="width:40%;" hidden></video>
+    <img id="MyImage" style="width:40%;" hidden></img>
+
+    <p id="PreviewHDRLabel">AdaptiveGTM HDR Preview</p>
+    <canvas id="PreviewHDR" style="width:40%;"></canvas>
+
+<table id="TimeSliderTable">
+  <tr>
+    <td> <input style="width:65px;" id="TimeSliderValue" min="0" max="5" step=0.001" value="0"></input></td>
+    <td> <button id="PlayPause"> &#x23EF; </button> </td>
+    <td style="width:100%;">
+      <input id="TimeSlider" type="range" min="0" max="5" step="0.001" value="0" style="width:100%;"/><br>
+    </td>
+  <tr>
+</table>
+
+
+    <table style="table-layout: auto; width:100%">
+      <tr>
+        <td style="width:120px;">
+          Headroom:
+          <span id="PreviewHdrHeadroomSliderValue" style="font-family:monospace;">4.00</span><br>
+        </td>
+        <td>
+          <input id="PreviewHdrHeadroomSlider" list="HeadroomTickmarks" style="width:100%;" type="range" min="0" max="4" step="0.001" value="2"/>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          Signal:
+        </td>
+        <td>
+            <label for="SignalTransfer">Transfer:</label>
+            <select name="SignalTransfer" id="SignalTransfer">
+              <option value=13>sRGB</option>
+              <option value=16>PQ</option>
+              <option value=18>HLG</option>
+            </select>
+            <label for="SignalPrimaries">Primaries:</label>
+            <select name="SignalPrimaries" id="SignalPrimaries">
+              <option value=1>sRGB</option>
+              <option value=12>P3</option>
+              <option value=9>ITU-R BT.2020</option>
+            </select>
+        </td>
+      </tr>
+      <tr>
+        <td  colspan="2">
+          <label for="QueryScreen">Use display's HDR headroom:</label>
+          <input type="checkbox" id="QueryScreen"></input>
+        </td>
+      </tr>
+      <tr>
+        <td  colspan="2">
+          <p>
+          <label for="WhiteSurroundTransform">White surround:</label>
+          <input type="checkbox" id="WhiteSurroundTransform"></input>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td  colspan="2">
+          <p>
+            <label for="NativeRendering">Native rendering</label>
+            <input type="checkbox" id="NativeRendering"></input>
+          </p>
+        </td>
+      </tr>
+    </table>
+
+  </td>
+
+  <td>
+
+          <canvas id="CurveEditorCanvas"></canvas>
+          <p>
+          <input type="radio" id="InputModeMoveXYM" name="input_mode" checked/>
+          <label for="InputModeMoveXYM">Move XY &#x21E7;M</label>
+          <input type="radio" id="InputModeMoveYM" name="input_mode"/>
+          <label for="InputModeMoveYM">Move Y,&#x21E7;M</label>
+          <input type="radio" id="InputModeAdd" name="input_mode"/>
+          <label for="InputModeAdd">Add</label>
+          <input type="radio" id="InputModeRemove" name="input_mode"/>
+          <label for="InputModeRemove">Remove</label>
+          </p>
+          <p>
+          <input id="AltrIndex" type="number" min="0" max="3" step="1" value="0"'/>
+          <label for="AltrIndex">Editor Altr</label>
+
+          <input id="LumSatSlider" type="range" min="0" max="1" step="0.001" value="1"/>
+          <label for="LumSatSlider">Lum-sat</label>
+
+          <input type="checkbox" id="ComputeStats"></input>
+          <label for="ComputeStats">Histogram</label>
+          </p>
+          <p>
+
+
+          <label for="Background">Background: </label>
+          <input id="Background" value="white" style="width:150px;"/>
+          <label for="Foreground">Foreground: </label>
+          <input id="Foreground" value="black" style="width:150px;"/>
+
+          </p>
+  </td>
+<tr>
+</table>
+</td>
+
+</tr>
+</table>
+
+<datalist id="HeadroomTickmarks">
+  <option value="0" label="0"></option>
+  <option value="1" label="1"></option>
+  <option value="2" label="2"></option>
+  <option value="3" label="3"></option>
+  <option value="4" label="4"></option>
+</datalist>
+
+<textarea id="MetadataJSON" style="width:100%" rows=100></textarea>
+
+</body>
