@@ -1,0 +1,23 @@
+{
+  "primaries": 9,
+  "transfer": 16,
+  "hdr_reference_white":40,
+  "gain_application_space_primaries":9,
+  "gain_offset":0,
+  "baseline_hdr_headoom":0.0,
+  "baseline_max_component":2.0,
+  "altr":[
+    {
+      "headroom":0.0,
+      "mix": { "rgb": [ 0, 0, 0 ], "max": 0, "min": 0, "channel": 1 },
+      "curve":[
+        {"x":16.000000, "y":0.000000, "m":0.000000}
+      ]
+    }
+  ],
+  "white_surround_transform": {
+    "x1": 0.001,
+    "y1": 0.02,
+    "x2": 0.5
+  }
+}

@@ -57,12 +57,15 @@ let logGainToLinearGrad = function(p) {
           yx:exp2(p.y), yy:(log(2) * p.x) * exp2(p.y)};
 }
 
-let logGainToLinear = function(p) {
+let logGainToLinear = function(p, clamp) {
   let x = p.x;
   let y = p.x * exp2(p.y);
   if (`m` in p) {
     let d_xy = mat2_mvm(logGainToLinearGrad(p), {x:1, y:p.m})
     return {x:x, y:y, m:d_xy.y / d_xy.x};
+  }
+  if (clamp) {
+    y = min(y, clamp);
   }
   return {x:x, y:y}
 }
@@ -337,8 +340,8 @@ class CurveEditor {
     return mat2_mm(this.linearToViewGrad(p_linear), logGainToLinearGrad(p));
   }
 
-  modelToView(p) {
-    return this.linearToView(logGainToLinear(p));
+  modelToView(p, clamp) {
+    return this.linearToView(logGainToLinear(p, clamp));
   }
 
   viewToModel(p_view, p_model_guess) {
@@ -556,23 +559,25 @@ class CurveEditor {
     }
 
     // Draw the curve itself (potentially interpolating between curve_min and curve_max).
-    this.context.beginPath();
-    this.context.lineWidth = 4;
-    this.context.strokeStyle = color + 'A0';
-    for (let v_x = this.view_offset.x; v_x < this.canvas.width; v_x += 2) {
-      let x = this.viewToModel({x:v_x}).x;
-      let y = w_min * curve_min.evaluate(x).y;
-      if (altr_max != null) {
-        y += w_max * curve_max.evaluate(x).y;
+    {
+      this.context.beginPath();
+      this.context.lineWidth = 4;
+      this.context.strokeStyle = color + 'A0';
+      for (let v_x = this.view_offset.x; v_x < this.canvas.width; v_x += 2) {
+        let x = this.viewToModel({x:v_x}).x;
+        let y = w_min * curve_min.evaluate(x).y;
+        if (altr_max != null) {
+          y += w_max * curve_max.evaluate(x).y;
+        }
+        let p = this.modelToView({x:x, y:y}, exp2(headroom));
+        if (x == 0) {
+          this.context.moveTo(p.x, p.y);
+        } else {
+          this.context.lineTo(p.x, p.y);
+        }
       }
-      let p = this.modelToView({x:x, y:y});
-      if (x == 0) {
-        this.context.moveTo(p.x, p.y);
-      } else {
-        this.context.lineTo(p.x, p.y);
-      }
+      this.context.stroke();
     }
-    this.context.stroke();
 
     // Draw the headroom we are targeting.
     {
@@ -1152,6 +1157,11 @@ let onFrame = function(now, frame_metadata) {
   onImageBitmapSource(MyVideo, MyVideo.videoWidth, MyVideo.videoHeight);
 }
 
+function setVideoSource(url) {
+  MyVideo.src = url;
+  MyVideo.requestVideoFrameCallback(onFrame);
+}
+
 function onFile(name, f) {
   let video_file = null;
   let image_file = null;
@@ -1253,21 +1263,34 @@ let main = function() {
       contentPrimaries = d;
       SignalPrimaries.value = d;
 
-      fetchFile(a);
-      fetchFile(b); 
+      if (a) fetchFile(a);
+      if (b) fetchFile(b); 
     };
     if (Content.value == 0)
-      loadContent('cow.avif', 'demo.json', kTransferPQ, kPrimariesRec2020);
+      loadContent('data/cow.avif', 'data/demo.json', kTransferPQ, kPrimariesRec2020);
     if (Content.value == 1)
-      loadContent('bmw-pq.png', 'demo.json', kTransferPQ, kPrimariesRec2020);
+      loadContent('data/bmw-pq.png', 'data/demo.json', kTransferPQ, kPrimariesRec2020);
     if (Content.value == 2)
-      loadContent('cairoli-av1.mp4', 'cairoli.json', kTransferHLG, kPrimariesRec2020);
+      loadContent('data/cairoli-av1.mp4', 'data/cairoli.json', kTransferHLG, kPrimariesRec2020);
+    if (Content.value == 3)
+      loadContent('data/b1421266c1.avif', 'data/dark-ws.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 4)
+      loadContent('data/out00037.avif', 'data/dark-ws.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 5)
+      loadContent('data/out02556.avif', 'data/dark-ws.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 6) {
+      loadContent('data/07-m3248-a131.avif', 'data/iceberg.json', kTransferPQ, kPrimariesRec2020);
+    }
+    if (Content.value == 7) {
+      setVideoSource('data/The World in HDR.mkv');
+      loadContent(null, 'data/demo.json', kTransferPQ, kPrimariesRec2020);
+    }
   });
   Metadata.addEventListener('change', function (e) {
     if (Content.value == 1)
-      fetchFile('lut3d-with.json');
+      fetchFile('data/lut3d-with.json');
     if (Content.value == 2)
-      fetchFile('lut3d-without.json');
+      fetchFile('data/lut3d-without.json');
   });
   ComputeStats.addEventListener('click', function(e) {
     if (ComputeStats.checked) {
@@ -1390,8 +1413,8 @@ let main = function() {
     QueryScreen.addEventListener('click', screenDetails);
   }
 
-  fetchFile('cow.avif');
-  fetchFile('demo.json');
+  fetchFile('data/cow.avif');
+  fetchFile('data/demo.json');
 }
 </script>
 </head>
@@ -1410,6 +1433,11 @@ let main = function() {
       <option value=0 checked>Cow (default)</option>
       <option value=1>BMW</option>
       <option value=2>Cairoli</option>
+      <option value=6>Iceberg</option>
+      <option value=7>The World in HDR</option>
+      <option value=3>WST (Will Smith)</option>
+      <option value=4>WST (ST0)</option>
+      <option value=5>WST (ST1)</option>
     </select>
     <label for="Metadata">Metadata</label>
     <select name="Metadata" id="Metadata">
@@ -1449,26 +1477,24 @@ let main = function() {
         </td>
       </tr>
       <tr>
-        <td>
-          Signal:
-        </td>
-        <td>
-            <label for="SignalTransfer">Transfer:</label>
-            <select name="SignalTransfer" id="SignalTransfer">
-              <option value=13>sRGB</option>
-              <option value=16>PQ</option>
-              <option value=18>HLG</option>
-            </select>
-            <label for="SignalPrimaries">Primaries:</label>
-            <select name="SignalPrimaries" id="SignalPrimaries">
-              <option value=1>sRGB</option>
-              <option value=12>P3</option>
-              <option value=9>ITU-R BT.2020</option>
-            </select>
+        <td colspan="2">
+        Signal:
+          <label for="SignalTransfer">Transfer:</label>
+          <select name="SignalTransfer" id="SignalTransfer">
+            <option value=13>sRGB</option>
+            <option value=16>PQ</option>
+            <option value=18>HLG</option>
+          </select>
+          <label for="SignalPrimaries">Primaries:</label>
+          <select name="SignalPrimaries" id="SignalPrimaries">
+            <option value=1>sRGB</option>
+            <option value=12>P3</option>
+            <option value=9>ITU-R BT.2020</option>
+          </select>
         </td>
       </tr>
       <tr>
-        <td  colspan="2">
+        <td colspan="2">
           <p>
           <label for="QueryScreen">Use display's HDR headroom:</label>
           <input type="checkbox" id="QueryScreen"></input>
@@ -1484,6 +1510,12 @@ let main = function() {
             <option value=1>Editor</option>
             <option value=2>JSON</option>
           </select>
+          </p>
+          <p>
+          <label for="Background">Background: </label>
+          <input id="Background" value="white" style="width:150px;"/>
+          <label for="Foreground">Foreground: </label>
+          <input id="Foreground" value="black" style="width:150px;"/>
           </p>
         </td>
       </tr>
@@ -1514,12 +1546,6 @@ let main = function() {
       <label for="ComputeStats">Histogram</label>
       </p>
 
-      <p>
-      <label for="Background">Background: </label>
-      <input id="Background" value="white" style="width:150px;"/>
-      <label for="Foreground">Foreground: </label>
-      <input id="Foreground" value="black" style="width:150px;"/>
-      </p>
     </div>
   </td>
 <tr>
