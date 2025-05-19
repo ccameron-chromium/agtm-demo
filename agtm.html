@@ -606,11 +606,11 @@ class CurveEditor {
     this.drawHistogram();
     this.drawIdentity();
     if (this.metadata) {
-      if (this.preview_headroom != null) {
-        this.drawInterpolatedCurve(this.preview_headroom, '#00FF00');
-      }
       for (let i = 0; i < this.metadata.altr.length; ++i) {
         this.drawCurve(this.metadata.altr[i], 1.0, null, 0.0, null, i == this.altr_index ? '#FF0000' : '#808080');
+      }
+      if (this.preview_headroom != null) {
+        this.drawInterpolatedCurve(this.preview_headroom, '#00FF00');
       }
     }
   }
@@ -796,8 +796,6 @@ const fs = `#version 300 es
   }
 
   void main() {
-    fragColor.a = 1.0;
-
     vec3 rgb = texture(content, texcoord).rgb;
     rgb = ApplyOetfInv(rgb, texture_trfn);
 
@@ -829,6 +827,7 @@ const fs = `#version 300 es
     rgb = ApplyOetf(rgb, framebuffer_trfn);
     rgb = clamp(rgb, 0.0, exp2(target_log2_headroom));
     fragColor.rgb = rgb;
+    fragColor.a = 1.0;
   }`;
 
 let compileShader = function(gl, vertex_source, fragment_source) {
@@ -947,12 +946,12 @@ class AdaptiveGtmRenderer {
     try {
       this.canvas.configureHighDynamicRange({ mode:'extended' /*, agtm:agtm_json */ });
     } catch(err) {
-      let warningsText = 'Missing experimental feature configureHighDynamicRange!!!<br>Enable "Experimental Web Platform Features" in chrome://flags';
+      warningsText = 'Missing experimental feature configureHighDynamicRange!!!<br>Enable "Experimental Web Platform Features" in chrome://flags';
     }
 
     if (warningsText != '') {
       Warnings.hidden = false;
-      Warnings.style = 'color:#BC0000;';
+      Warnings.style = 'color:#FF0000;';
       Warnings.innerHTML = '<strong>' + warningsText + '</strong>';
     }
   }
@@ -972,6 +971,8 @@ class AdaptiveGtmRenderer {
     let gl = this.gl;
     if (gl) {
       try {
+        this.canvas.width = this.fb_w;
+        this.canvas.height = this.fb_h;
         gl.drawingBufferStorage(gl.RGBA16F, this.fb_w, this.fb_h);
       } catch (err) {
         this.canvas.width = this.fb_w;
@@ -1054,7 +1055,23 @@ class AdaptiveGtmRenderer {
     this.agtm.setUniforms(this.framebuffer_log2_headroom, this.program, 2);
  
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    if (this.save_requested) {
+      this.save_requested = false;
+      let mime_type = "image/png";
+      let download_link = document.createElement('a');
+      let data_url = this.canvas.toDataURL(mime_type);
+ 
+      download_link.download = 'out.png';
+      download_link.href = data_url;
+      download_link.dataset.downloadurl = [mime_type, download_link.download, download_link.href].join(':');
+ 
+      document.body.appendChild(download_link);
+      download_link.click();
+      document.body.removeChild(download_link);
+    }
   }
+
 }
 
 
@@ -1268,6 +1285,8 @@ let main = function() {
     };
     if (Content.value == 0)
       loadContent('data/cow.avif', 'data/demo.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 8)
+      loadContent('data/cow-sdr.jpg', 'data/cow-sdr.json', kTransferSRGB, kPrimariesP3);
     if (Content.value == 1)
       loadContent('data/bmw-pq.png', 'data/demo.json', kTransferPQ, kPrimariesRec2020);
     if (Content.value == 2)
@@ -1291,6 +1310,8 @@ let main = function() {
       fetchFile('data/lut3d-with.json');
     if (Content.value == 2)
       fetchFile('data/lut3d-without.json');
+    if (Content.value == 3)
+      fetchFile('data/cow-sdr.json');
   });
   ComputeStats.addEventListener('click', function(e) {
     if (ComputeStats.checked) {
@@ -1387,6 +1408,12 @@ let main = function() {
     UploadButton.click();
   });
 
+  let saveCanvas = function() {
+    hdr_preview.save_requested = true;
+    hdr_preview.draw();
+  }
+  ButtonSave.addEventListener('click', saveCanvas);
+
 
   // Configure the HDR screen info.
   {
@@ -1428,20 +1455,23 @@ let main = function() {
     <p style='text-align:center;'>
       <input  type="file"   id="UploadButton" style="display:none">
       <button type="button" id="UploadButtonFake">Upload Image</button>
+      <button type="button" id="ButtonSave">Save Canvas</button>
     <label for="Content">Content</label>
     <select name="Content" id="Content">
-      <option value=0 checked>Cow (default)</option>
+      <option value=0 selected>Cow (Eric Chan)</option>
+      <option value=8>Cow (SDR JPEG base)</option>
       <option value=1>BMW</option>
       <option value=2>Cairoli</option>
-      <option value=6>Iceberg</option>
+      <option value=6>Iceberg (Eric Chan)</option>
       <option value=7>The World in HDR</option>
       <option value=3>WST (Will Smith)</option>
-      <option value=4>WST (ST0)</option>
-      <option value=5>WST (ST1)</option>
+      <option value=4>WST (Stranger Things)</option>
+      <option value=5>WST (Stranger Things)</option>
     </select>
     <label for="Metadata">Metadata</label>
     <select name="Metadata" id="Metadata">
-      <option value=0 checked>default</option>
+      <option value=0 selected>default</option>
+      <option value=3>SDR to HDR</option>
       <option value=1>Lut3D-with</option>
       <option value=2>Lut3D-without</option>
     </select>
@@ -1482,14 +1512,14 @@ let main = function() {
           <label for="SignalTransfer">Transfer:</label>
           <select name="SignalTransfer" id="SignalTransfer">
             <option value=13>sRGB</option>
-            <option value=16>PQ</option>
+            <option value=16 selected>PQ</option>
             <option value=18>HLG</option>
           </select>
           <label for="SignalPrimaries">Primaries:</label>
           <select name="SignalPrimaries" id="SignalPrimaries">
             <option value=1>sRGB</option>
             <option value=12>P3</option>
-            <option value=9>ITU-R BT.2020</option>
+            <option value=9 selected>ITU-R BT.2020</option>
           </select>
         </td>
       </tr>
