@@ -746,6 +746,7 @@ const fs = `#version 300 es
   out vec4 fragColor;
 
   uniform float target_log2_headroom;
+  uniform float linear_scale;
 
   uniform float hdr_reference_white;
 
@@ -821,6 +822,8 @@ const fs = `#version 300 es
 
     // Apply gain curve.
     rgb = AgtmToneMap(rgb, texture_primaries);
+
+    rgb *= linear_scale;
 
     // Convert to the framebuffer encoding.
     rgb = primariesConvert(rgb, gain_application_space_primaries, framebuffer_primaries);
@@ -923,6 +926,7 @@ class AdaptiveGtmRenderer {
     this.framebuffer_transfer = kTransferSRGB;
     this.framebuffer_primaries = kPrimariesP3;
     this.framebuffer_log2_headroom = 0;
+    this.framebuffer_linear_scale = 1;
     // Set default metadata to render the video as sRGB.
     this.metadata = null;
  
@@ -958,6 +962,10 @@ class AdaptiveGtmRenderer {
 
   setHeadroomLog2(value) {
     this.framebuffer_log2_headroom = value;
+    this.draw();
+  }
+  setSimulatedHeadroomLog2(value) {
+    this.framebuffer_linear_scale = 1/exp2(value);
     this.draw();
   }
   setMetadata(metadata) {
@@ -1033,6 +1041,8 @@ class AdaptiveGtmRenderer {
     gl.uniform1i(gl.getUniformLocation(this.program, 'framebuffer_trfn'), this.framebuffer_transfer);
     gl.uniform1i(gl.getUniformLocation(this.program, 'framebuffer_primaries'), this.framebuffer_primaries);
     gl.uniform1f(gl.getUniformLocation(this.program, 'target_log2_headroom'), this.framebuffer_log2_headroom);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'linear_scale'), this.framebuffer_linear_scale);
+
 
  
     gl.uniform1i(gl.getUniformLocation(this.program, 'texture_trfn'),
@@ -1369,6 +1379,16 @@ let main = function() {
     curve_editor.setPreviewHeadroom(value);
     PreviewHdrHeadroomSliderValue.innerText = value.toFixed(2);
   }, false);
+  SimulatedHdrHeadroomSlider.addEventListener('input', function(e) {
+    let h = Number(SimulatedHdrHeadroomSlider.value);
+    hdr_preview.setSimulatedHeadroomLog2(h);
+    SimulatedHdrHeadroomSliderValue.innerText = h.toFixed(2);
+
+    let v = (1/exp2(h)).toFixed(2);
+    let bg_color = 'color(srgb-linear ' + v+ ' ' + v + ' ' + v + ')';
+    Background.value = bg_color;
+    updateColors();
+  }, false);
 
   LumSatSlider.addEventListener('input', function(e) {
     let value = Number(LumSatSlider.value);
@@ -1506,6 +1526,17 @@ let main = function() {
           <input id="PreviewHdrHeadroomSlider" list="HeadroomTickmarks" style="width:100%;" type="range" min="0" max="4" step="0.001" value="2"/>
         </td>
       </tr>
+
+      <tr>
+        <td style="width:120px;">
+          Simulated Headroom:
+          <span id="SimulatedHdrHeadroomSliderValue" style="font-family:monospace;">0.00</span><br>
+        </td>
+        <td>
+          <input id="SimulatedHdrHeadroomSlider" list="HeadroomTickmarks" style="width:100%;" type="range" min="0" max="4" step="0.001" value="0"/>
+        </td>
+      </tr>
+
       <tr>
         <td colspan="2">
         Signal:
