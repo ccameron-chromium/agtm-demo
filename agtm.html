@@ -64,7 +64,7 @@ let logGainToLinear = function(p, clamp) {
     let d_xy = mat2_mvm(logGainToLinearGrad(p), {x:1, y:p.m})
     return {x:x, y:y, m:d_xy.y / d_xy.x};
   }
-  if (clamp) {
+  if (0 && clamp) {
     y = min(y, clamp);
   }
   return {x:x, y:y}
@@ -1250,6 +1250,7 @@ function onFileList(files) {
 }
 
 let fetchFile = function(filename) {
+  console.log(filename);
   const myRequest = new Request(filename);
   fetch(myRequest)
     .then((response) => response.blob())
@@ -1294,7 +1295,7 @@ let main = function() {
       if (b) fetchFile(b); 
     };
     if (Content.value == 0)
-      loadContent('data/cow.avif', 'data/demo.json', kTransferPQ, kPrimariesRec2020);
+      loadContent('data/cow.avif', 'data/cow.json', kTransferPQ, kPrimariesRec2020);
     if (Content.value == 8)
       loadContent('data/cow-sdr.jpg', 'data/cow-sdr.json', kTransferSRGB, kPrimariesP3);
     if (Content.value == 1)
@@ -1316,11 +1317,20 @@ let main = function() {
     }
   });
   Metadata.addEventListener('change', function (e) {
-    if (Content.value == 1)
+    console.log(Metadata.value);
+    if (Metadata.value == 1)
       fetchFile('data/lut3d-with.json');
-    if (Content.value == 2)
+    if (Metadata.value == 2)
       fetchFile('data/lut3d-without.json');
-    if (Content.value == 3)
+
+    if (Metadata.value == 0)
+      fetchFile('data/demo.json');
+    if (Metadata.value == 3)
+      fetchFile('data/demo-sdr.json');
+
+    if (Metadata.value == 4)
+      fetchFile('data/cow.json');
+    if (Metadata.value == 5)
       fetchFile('data/cow-sdr.json');
   });
   ComputeStats.addEventListener('click', function(e) {
@@ -1490,10 +1500,10 @@ let main = function() {
     </select>
     <label for="Metadata">Metadata</label>
     <select name="Metadata" id="Metadata">
-      <option value=0 selected>default</option>
+      <option value=0 selected>HDR to SDR default</option>
       <option value=3>SDR to HDR</option>
-      <option value=1>Lut3D-with</option>
-      <option value=2>Lut3D-without</option>
+      <option value=4>HDR to SDR two curves</option>
+      <option value=5>SDR to HDR two curves</option>
     </select>
     </p>
 

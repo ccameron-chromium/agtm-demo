@@ -32,7 +32,7 @@ class PiecewiseCubic {
     }
     if (x >= this.control_points[n-1].x) {
       let xym = this.control_points[n-1];
-      result.y = log2(exp2(xym.y) * xym.x / x);
+      result.y = xym.y + log2(xym.x / x);
       result.m = 0;
       return result;
     }
