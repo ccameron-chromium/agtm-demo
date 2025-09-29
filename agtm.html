@@ -817,16 +817,13 @@ const fs = `#version 300 es
       }
     }
 
-    // Convert to gain application color space.
-    rgb = primariesConvert(rgb, texture_primaries, gain_application_space_primaries);
-
     // Apply gain curve.
     rgb = AgtmToneMap(rgb, texture_primaries);
 
     rgb *= linear_scale;
 
     // Convert to the framebuffer encoding.
-    rgb = primariesConvert(rgb, gain_application_space_primaries, framebuffer_primaries);
+    rgb = primariesConvert(rgb, texture_primaries, framebuffer_primaries);
     rgb = ApplyOetf(rgb, framebuffer_trfn);
     rgb = clamp(rgb, 0.0, exp2(target_log2_headroom));
     fragColor.rgb = rgb;
