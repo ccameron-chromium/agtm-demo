@@ -41,10 +41,10 @@ const kAgtmToneMapperGLSL = `
     // Binary search to find the interval containing x. This will take at most
     // 5 steps (in the case of 32 control points)
     for (int step = 0; step < 5; ++step) {
-      if (xym_max.x - xym_min.x == 1.0) {
+      if (c_max - c_min < 1.1) {
         break;
       }
-      float c_mid = round(0.5 * (c_min + c_max));
+      float c_mid = ceil(0.5 * (c_min + c_max));
       vec4 xym_mid = texture(curve, vec2((c_mid + 0.5) / 32.0, tcy));
       if (x == xym_mid.x) {
         return xym_mid.y;
