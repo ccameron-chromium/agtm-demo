@@ -1,9 +1,9 @@
 const kAgtmToneMapperGLSL = `
   uniform sampler2D curve;
-  uniform float curve_size_i;
-  uniform float curve_size_j;
-  uniform float curve_tcy_i;
-  uniform float curve_tcy_j;
+  uniform float curve_N_cp_i;
+  uniform float curve_N_cp_j;
+  uniform float curve_texcoord_y_i;
+  uniform float curve_texcoord_y_j;
   uniform float weight_i;
   uniform float weight_j;
   uniform vec3 mix_rgb_i;
@@ -13,9 +13,7 @@ const kAgtmToneMapperGLSL = `
   uniform highp int gain_application_space_primaries;
 
   // Component mixing function.
-  vec3 EvaluateChannelMix(vec3 rgb, bool j) {
-    vec3 mix_rgb = j ? mix_rgb_j : mix_rgb_i;
-    vec3 mix_Mmc = j ? mix_Mmc_j : mix_Mmc_i;
+  vec3 EvaluateChannelMix(vec3 rgb, vec3 mix_rgb, vec3 mix_Mmc) {
     return mix_Mmc[2] * rgb + 
            vec3(mix_rgb[0] * rgb[0] +
                 mix_rgb[1] * rgb[1] +
@@ -25,13 +23,7 @@ const kAgtmToneMapperGLSL = `
   }
 
   // Piecewise cubic evaluation (via a texture).
-  float EvaluateGainCurve(float x, bool j) {
-    float tcy = j ? curve_tcy_j : curve_tcy_i;
-    float N_cp = j ? curve_size_j : curve_size_i;
-
-    // The indices of the endpoints of the binary search for the interval
-    // containing x.
-
+  float EvaluateGainCurve(float x, float tcy, float N_cp) {
     // Check the first control point.
     float c_min = 0.0;
     vec4 xym_min = texture(curve, vec2((c_min + 0.5) / 32.0, tcy));
@@ -78,19 +70,28 @@ const kAgtmToneMapperGLSL = `
     return ((c3*t + c2)*t + c1)*t + c0;
   }
 
-  vec3 AgtmLogGain(vec3 rgb, bool j) {
-    vec3 mix = EvaluateChannelMix(rgb, j);
-
-    return vec3(EvaluateGainCurve(mix[0], j),
-                EvaluateGainCurve(mix[1], j),
-                EvaluateGainCurve(mix[2], j));
+  vec3 AgtmLogGain(vec3 rgb, vec3 mix_rgb, vec3 mix_Mmc, float curve_texcoord_y, float curve_N_cp) {
+    vec3 M = EvaluateChannelMix(rgb, mix_rgb, mix_Mmc);
+    if (mix_Mmc[2] == 0.0) {
+      return vec3(EvaluateGainCurve(M.r, curve_texcoord_y, curve_N_cp));
+    }
+    return vec3(EvaluateGainCurve(M.r, curve_texcoord_y, curve_N_cp),
+                EvaluateGainCurve(M.g, curve_texcoord_y, curve_N_cp),
+                EvaluateGainCurve(M.b, curve_texcoord_y, curve_N_cp));
   }
 
   vec3 AgtmToneMap(vec3 rgb, int input_color_primaries) {
     rgb = primariesConvert(rgb, input_color_primaries, gain_application_space_primaries);
 
-    vec3 G = weight_i * AgtmLogGain(rgb, false) +
-             weight_j * AgtmLogGain(rgb, true);
+    vec3 G = vec3(0.0);
+    if (weight_i > 0.0) {
+      G += weight_i *
+           AgtmLogGain(rgb, mix_rgb_i, mix_Mmc_i, curve_texcoord_y_i, curve_N_cp_i);
+    }
+    if (weight_j > 0.0) {
+      G += weight_j *
+           AgtmLogGain(rgb, mix_rgb_j, mix_Mmc_j, curve_texcoord_y_j, curve_N_cp_j);
+    }
     rgb *= exp2(G);
 
     rgb = primariesConvert(rgb, gain_application_space_primaries, input_color_primaries);
@@ -137,10 +138,10 @@ class AgtmToneMapper {
     gl.bindTexture(gl.TEXTURE_2D, this.curve_texture);
     gl.uniform1i(gl.getUniformLocation(p, 'curve'),   tex0);
 
-    gl.uniform1f(gl.getUniformLocation(p, 'curve_tcy_i'), (a.i + 0.5) / 4.0);
-    gl.uniform1f(gl.getUniformLocation(p, 'curve_tcy_j'), (a.j + 0.5) / 4.0);
-    gl.uniform1f(gl.getUniformLocation(p, 'curve_size_i'), m.altr[a.i].curve.length);
-    gl.uniform1f(gl.getUniformLocation(p, 'curve_size_j'), m.altr[a.j].curve.length);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_texcoord_y_i'), (a.i + 0.5) / 4.0);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_texcoord_y_j'), (a.j + 0.5) / 4.0);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_i'), m.altr[a.i].curve.length);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_j'), m.altr[a.j].curve.length);
 
     gl.uniform3f(gl.getUniformLocation(p, 'mix_rgb_i'), m.altr[a.i].mix.rgb[0],
                                                         m.altr[a.i].mix.rgb[1],
