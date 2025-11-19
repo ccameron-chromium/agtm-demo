@@ -1,18 +1,15 @@
 const kAgtmToneMapperGLSL = `
-  uniform sampler2D curve_i;
-  uniform sampler2D curve_j;
-  uniform float curve_size;
-  uniform sampler2D lut3d_i;
-  uniform sampler2D lut3d_j;
-  uniform float lut3d_size_i;
-  uniform float lut3d_size_j;
+  uniform sampler2D curve;
+  uniform float curve_size_i;
+  uniform float curve_size_j;
+  uniform float curve_tcy_i;
+  uniform float curve_tcy_j;
   uniform float weight_i;
   uniform float weight_j;
   uniform vec3 mix_rgb_i;
   uniform vec3 mix_rgb_j;
   uniform vec3 mix_Mmc_i;
   uniform vec3 mix_Mmc_j;
-  uniform float baseline_max_component;
   uniform highp int gain_application_space_primaries;
 
   // Component mixing function.
@@ -28,89 +25,72 @@ const kAgtmToneMapperGLSL = `
   }
 
   // Piecewise cubic evaluation (via a texture).
-  float SampleGainCurveTexture(vec2 tc, bool j) {
-    return j ? texture(curve_j, tc).r :
-               texture(curve_i, tc).r;
-  }
   float EvaluateGainCurve(float x, bool j) {
-    x = clamp(x, 0.0, 1.0);
-    x = (x * (curve_size - 1.0) + 0.5) / curve_size;
-    return SampleGainCurveTexture(vec2(x, 0.5), j);
-  }
+    float tcy = j ? curve_tcy_j : curve_tcy_i;
+    float N_cp = j ? curve_size_j : curve_size_i;
 
-  // Tetrahedral sampling of 3D LUT.
-  vec3 SampleTexture3dNearest(vec3 q, bool j) {
-    // The coordinate q is an integer in the domain [0, N-1]^3.
-    float N = j ? lut3d_size_j :
-                  lut3d_size_i;
-    vec2 tc = vec2((q.b + N*q.g + 0.5) / (N*N),
-                   (q.r + 0.5) / N);
-    return j ? texture(lut3d_j, tc).rgb :
-               texture(lut3d_i, tc).rgb;
-  }
-  vec3 Sample3dTex3dTetrahedral(vec3 C_unit, bool j) {
-    float N = j ? lut3d_size_j :
-                  lut3d_size_i;
-    if (N <= 1.0) {
-      return vec3(0.0, 0.0, 0.0);
-    }
-    vec3 C = clamp(C_unit, 0.0, 1.0) * (N - 1.0);
-    vec3 K = floor(C);
-    vec3 X = C - K;
-    vec3 L = vec3(1.0);
-    vec3 A;
-    vec3 B;
-    if (X[0] >= X[1] && X[1] >= X[2]) { A = vec3(1.0, 0.0, 0.0); B = vec3(1.0, 1.0, 0.0); }
-    if (X[1] >= X[0] && X[0] >= X[2]) { A = vec3(1.0, 1.0, 0.0); B = vec3(0.0, 1.0, 0.0); }
-    if (X[1] >= X[2] && X[2] >= X[0]) { A = vec3(0.0, 1.0, 0.0); B = vec3(0.0, 1.0, 1.0); }
-    if (X[2] >= X[1] && X[1] >= X[0]) { A = vec3(0.0, 1.0, 1.0); B = vec3(0.0, 0.0, 1.0); }
-    if (X[2] >= X[0] && X[0] >= X[1]) { A = vec3(0.0, 0.0, 1.0); B = vec3(1.0, 0.0, 1.0); }
-    if (X[0] >= X[2] && X[2] >= X[1]) { A = vec3(1.0, 0.0, 1.0); B = vec3(1.0, 0.0, 0.0); }
+    // The indices of the endpoints of the binary search for the interval
+    // containing x.
 
-    // The matrix being inverted is a constant, but I am also lazy.
-    mat3 M = mat3(L, A, B);
-    vec3 w = inverse(M) * X;
-    float w_k = 1.0 - w[0] - w[1] - w[2];
-
-    // Errors in barycentric coordinates are magenta.
-    if (w[0] < 0.0 || w[0] > 1.0 ||
-        w[1] < 0.0 || w[1] > 1.0 ||
-        w[2] < 0.0 || w[2] > 1.0 ||
-        w_k  < 0.0 || w_k  > 1.0) {
-      return vec3(1.0, 0.0, 1.0);
+    // Check the first control point.
+    float c_min = 0.0;
+    vec4 xym_min = texture(curve, vec2((c_min + 0.5) / 32.0, tcy));
+    if (x <= xym_min.x) {
+      return xym_min.y;
     }
 
-    // Reconstruction errors are in cyan.
-    vec3 Cr = w_k  * ( K ) +
-              w[0] * (K+L) +
-              w[1] * (K+A) +
-              w[2] * (K+B);
-    if (length(C - Cr) > 0.1) {
-      return vec3(0.0, 0.0, 1.0);
+    // Check the last control point.
+    float c_max = N_cp - 1.0;
+    vec4 xym_max = texture(curve, vec2((c_max + 0.5) / 32.0, tcy));
+    if (x >= xym_max.x) {
+      return xym_max.y + log2(xym_max.x / x);
     }
 
-    vec3 x = w_k  * SampleTexture3dNearest(K,     j) +
-             w[0] * SampleTexture3dNearest(K + L, j) +
-             w[1] * SampleTexture3dNearest(K + A, j) +
-             w[2] * SampleTexture3dNearest(K + B, j);
-    return x;
+    // Binary search to find the interval containing x. This will take at most
+    // 5 steps (in the case of 32 control points)
+    for (int step = 0; step < 5; ++step) {
+      if (xym_max.x - xym_min.x == 1.0) {
+        break;
+      }
+      float c_mid = round(0.5 * (c_min + c_max));
+      vec4 xym_mid = texture(curve, vec2((c_mid + 0.5) / 32.0, tcy));
+      if (x == xym_mid.x) {
+        return xym_mid.y;
+      } else if (x < xym_mid.x) {
+        c_max = c_mid;
+        xym_max = xym_mid;
+      } else {
+        c_min = c_mid;
+        xym_min = xym_mid;
+      }
+    }
+
+    // Compute the coefficients and evaluate the polynomial.
+    float h = xym_max.x - xym_min.x;
+    float mHat_min = xym_min.z * h;
+    float mHat_max = xym_max.z * h;
+    float c3 =  2.f * xym_min.y + mHat_min - 2.f * xym_max.y + mHat_max;
+    float c2 = -3.f * xym_min.y + 3.f * xym_max.y - 2.f * mHat_min - mHat_max;
+    float c1 = mHat_min;
+    float c0 = xym_min.y;
+    float t = (x - xym_min.x) / h;
+
+    return ((c3*t + c2)*t + c1)*t + c0;
   }
 
   vec3 AgtmLogGain(vec3 rgb, bool j) {
     vec3 mix = EvaluateChannelMix(rgb, j);
-    vec3 curve = vec3(EvaluateGainCurve(mix[0], j),
-                      EvaluateGainCurve(mix[1], j),
-                      EvaluateGainCurve(mix[2], j));
-    vec3 lut = Sample3dTex3dTetrahedral(rgb, j);
-    return curve + lut;
+
+    return vec3(EvaluateGainCurve(mix[0], j),
+                EvaluateGainCurve(mix[1], j),
+                EvaluateGainCurve(mix[2], j));
   }
 
   vec3 AgtmToneMap(vec3 rgb, int input_color_primaries) {
     rgb = primariesConvert(rgb, input_color_primaries, gain_application_space_primaries);
 
-    vec3 U = clamp(rgb / baseline_max_component, vec3(0.0), vec3(1.0));
-    vec3 G = weight_i * AgtmLogGain(U, false) +
-             weight_j * AgtmLogGain(U, true);
+    vec3 G = weight_i * AgtmLogGain(rgb, false) +
+             weight_j * AgtmLogGain(rgb, true);
     rgb *= exp2(G);
 
     rgb = primariesConvert(rgb, gain_application_space_primaries, input_color_primaries);
@@ -127,62 +107,23 @@ class AgtmToneMapper {
       return;
     }
 
-    this.curve_size = 4096;
-    this.curve_textures = [];
+    let curve_pixels = new Float32Array(32 * 4 * 4);
     for (let i = 0; i < this.metadata.altr.length; ++i) {
-      let curve_pixels = new Float32Array(this.curve_size);
-      let f = new PiecewiseCubic(metadata.altr[i].curve);
-      for (let j = 0; j < this.curve_size; ++j) {
-        let x = this.metadata.baseline_max_component * (j / (this.curve_size - 1));
-        let y = f.evaluate(x).y;
-        curve_pixels[j] = y;
+      for (let jj = 0; jj < 32; ++jj) {
+        let j = jj < metadata.altr[i].curve.length ? jj : (metadata.altr[i].curve.length - 1);
+        curve_pixels[32*4*i + 4*j + 0] = metadata.altr[i].curve[j].x;
+        curve_pixels[32*4*i + 4*j + 1] = metadata.altr[i].curve[j].y;
+        curve_pixels[32*4*i + 4*j + 2] = metadata.altr[i].curve[j].m;
+        curve_pixels[32*4*i + 4*j + 3] = 0;
       }
-
-      let tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, this.curve_size, 1, 0, gl.RED, gl.FLOAT, curve_pixels);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      this.curve_textures = this.curve_textures.concat(tex);
     }
-
-    this.lut3d_sizes = [];
-    this.lut3d_textures = [];
-    for (let i = 0; i < this.metadata.altr.length; ++i) {
-      let samples = metadata.altr[i].lut3d;
-      if (!samples) {
-        this.lut3d_sizes = this.lut3d_sizes.concat(0);
-        this.lut3d_textures = this.lut3d_textures.concat(null);
-        continue;
-      }
-      console.log('has lut3d!');
-      let N = Math.cbrt(samples.length);
-      let lut3d_pixels = new Float32Array(4*N*N*N);
-      let j = 0;
-      let k = 0;
-      for (let r = 0; r < N; ++r) {
-        for (let g = 0; g < N; ++g) {
-          for (let b = 0; b < N; ++b) {
-            lut3d_pixels[j++] = samples[k][0];
-            lut3d_pixels[j++] = samples[k][1];
-            lut3d_pixels[j++] = samples[k][2];
-            lut3d_pixels[j++] = 1.0
-            k++;
-          }
-        }
-      }
-
-      let tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, N*N, N, 0, gl.RGBA, gl.FLOAT, lut3d_pixels);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-
-      this.lut3d_sizes = this.lut3d_sizes.concat(N);
-      this.lut3d_textures = this.lut3d_textures.concat(tex);
-    }
+    let tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 32, 4, 0, gl.RGBA, gl.FLOAT, curve_pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    this.curve_texture = tex;
   }
 
   // Set the uniforms. This will use the 4 textures starting at tex0.
@@ -192,23 +133,14 @@ class AgtmToneMapper {
     let gl = this.gl;
     let a = AgtmAdapt(m, targeted_hdr_headroom);
 
-    gl.activeTexture(gl.TEXTURE0 + tex0 + 0);
-    gl.bindTexture(gl.TEXTURE_2D, this.curve_textures[a.i]);
-    gl.activeTexture(gl.TEXTURE0 + tex0 + 1);
-    gl.bindTexture(gl.TEXTURE_2D, this.curve_textures[a.j]);
-    gl.activeTexture(gl.TEXTURE0 + tex0 + 2);
-    gl.bindTexture(gl.TEXTURE_2D, this.lut3d_textures[a.i]);
-    gl.activeTexture(gl.TEXTURE0 + tex0 + 3);
-    gl.bindTexture(gl.TEXTURE_2D, this.lut3d_textures[a.j]);
+    gl.activeTexture(gl.TEXTURE0 + tex0);
+    gl.bindTexture(gl.TEXTURE_2D, this.curve_texture);
+    gl.uniform1i(gl.getUniformLocation(p, 'curve'),   tex0);
 
-    gl.uniform1i(gl.getUniformLocation(p, 'curve_i'), tex0 + 0);
-    gl.uniform1i(gl.getUniformLocation(p, 'curve_j'), tex0 + 1);
-    gl.uniform1i(gl.getUniformLocation(p, 'lut3d_i'), tex0 + 2);
-    gl.uniform1i(gl.getUniformLocation(p, 'lut3d_j'), tex0 + 3);
-
-    gl.uniform1f(gl.getUniformLocation(p, 'curve_size'), this.curve_size);
-    gl.uniform1f(gl.getUniformLocation(p, 'lut3d_size_i'), this.lut3d_sizes[a.i]);
-    gl.uniform1f(gl.getUniformLocation(p, 'lut3d_size_j'), this.lut3d_sizes[a.j]);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_tcy_i'), (a.i + 0.5) / 4.0);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_tcy_j'), (a.j + 0.5) / 4.0);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_size_i'), m.altr[a.i].curve.length);
+    gl.uniform1f(gl.getUniformLocation(p, 'curve_size_j'), m.altr[a.j].curve.length);
 
     gl.uniform3f(gl.getUniformLocation(p, 'mix_rgb_i'), m.altr[a.i].mix.rgb[0],
                                                         m.altr[a.i].mix.rgb[1],
@@ -225,7 +157,6 @@ class AgtmToneMapper {
 
     gl.uniform1f(gl.getUniformLocation(p, 'weight_i'), a.weight_i);
     gl.uniform1f(gl.getUniformLocation(p, 'weight_j'), a.weight_j);
-    gl.uniform1f(gl.getUniformLocation(p, 'baseline_max_component'), m.baseline_max_component);
     gl.uniform1i(gl.getUniformLocation(p, 'gain_application_space_primaries'),
                  m.gain_application_space_primaries);
   }
