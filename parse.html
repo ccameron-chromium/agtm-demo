@@ -249,6 +249,12 @@ let getRec2020Primaries = function() {
 let populateWithPCHIP = function(cp) {
   const N = cp.length;
 
+  // deal with it later.
+  for (let i = 0; i < N; ++i) {
+    cp[i].m = "TODO-PCHIP";
+  }
+  return;
+
   if (N === 0) return;
 
   // Compute the interval width (h) and piecewise linear slope (s)
@@ -292,6 +298,8 @@ let populateWithPCHIP = function(cp) {
 
 let populateWithRWTMO = function(hatm) {
   hatm.gain_application_space_primaries = getRec2020Primaries();
+  hatm.alternate_images = "TODO-RWMTO";
+  return;
 
   if (hatm.baseline_hdr_headroom === 0) {
     hatm.alternate_images = [];
@@ -408,8 +416,9 @@ let syntaxToMetadata = function(syntax, metadata) {
           let alt = {};
           alt.hdr_headroom = uint16_to_float(syntax.alternate_hdr_headrooms[a], 0, 60000, 0, 10000.0);
 
+          alt.color_gain_function = {}
           if (syntax.component_mixing_type[a] === 3) {
-            alt.component_mixing = {
+            alt.color_gain_function.component_mixing = {
               red: uint16_to_float(syntax.component_mixing_coefficients[a][0], 0, 50000, 0, 50000.0),
               green: uint16_to_float(syntax.component_mixing_coefficients[a][1], 0, 50000, 0, 50000.0),
               blue: uint16_to_float(syntax.component_mixing_coefficients[a][2], 0, 50000, 0, 50000.0),
@@ -419,7 +428,7 @@ let syntaxToMetadata = function(syntax, metadata) {
             };
           }
 
-          alt.gain_curve = {
+          alt.color_gain_function.gain_curve = {
             control_points: []
           };
           const sign = hatm.baseline_hdr_headroom < alt.hdr_headroom ? 1.0 : -1.0;
@@ -432,10 +441,10 @@ let syntaxToMetadata = function(syntax, metadata) {
               const theta = uint16_to_float(syntax.gain_curve_control_points_theta[a][c], 1, 35999, 18000, 36000.0 / Math.PI);
               cp.m = Math.tan(theta);
             }
-            alt.gain_curve.control_points.push(cp);
+            alt.color_gain_function.gain_curve.control_points.push(cp);
           }
           if (syntax.gain_curve_use_pchip_slope_flag[a] === 1) {
-            populateWithPCHIP(alt.gain_curve.control_points);
+            populateWithPCHIP(alt.color_gain_function.gain_curve.control_points);
           }
           hatm.alternate_images.push(alt);
         }
