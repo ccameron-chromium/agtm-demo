@@ -1,7 +1,7 @@
 <head>
 <script>
 
-class BitStream {
+class ReadBitStream {
     constructor(uint8Array) {
         this.bytes = uint8Array;
         this.byteIndex = 0;
@@ -25,19 +25,10 @@ class BitStream {
         }
         return value;
     }
-    read16() {
-        return this.read(16);
-    }
-    readReservedZero(bits) {
-      const value = this.read(bits);
-      if (value !== 0) {
-        throw new Error("Expected zero but got " + value);
-      }
-    }
 };
 
 // Table C.1 — Application #5 syntax structure
-function parseApplicationInfo(stream, syntax) {
+let parseApplicationInfo = function(stream, syntax) {
     syntax.application_version = stream.read(3);
     syntax.minimum_application_version = stream.read(3);
     syntax.reserved_zero_c1 = stream.read(2);
@@ -46,7 +37,7 @@ function parseApplicationInfo(stream, syntax) {
 
 
 // Table C.2 — Color volume transform syntax structure
-function parseColorVolumeTransform(stream, syntax) {
+let parseColorVolumeTransform = function(stream, syntax) {
     syntax.has_custom_hdr_reference_white_flag = stream.read(1);
     syntax.has_adaptive_tone_map_flag = stream.read(1);
     syntax.reserved_zero_c2 = stream.read(6);
@@ -60,7 +51,7 @@ function parseColorVolumeTransform(stream, syntax) {
 }
 
 // Table C.3 — Headroom-adaptive tone map structure syntax
-function parseAdaptiveToneMap(stream, syntax) {
+let parseAdaptiveToneMap = function(stream, syntax) {
     syntax.baseline_hdr_headroom = stream.read(16);
     syntax.use_reference_white_tone_mapping_flag = stream.read(1);
 
@@ -103,7 +94,7 @@ function parseAdaptiveToneMap(stream, syntax) {
 }
 
 // Table C.4 — Component mixing function structure syntax
-function parseComponentMixing(stream, syntax, a) {
+let parseComponentMixing = function(stream, syntax, a) {
   if (a === 0 || syntax.has_common_component_mix_params_flag === 0) {
     syntax.component_mixing_type[a] = stream.read(2);
 
@@ -120,7 +111,7 @@ function parseComponentMixing(stream, syntax, a) {
       }
       for (let k = 0; k < 6; k++) {
         if (syntax.has_component_mixing_coefficient_flag[a][k] === 1) {
-          syntax.component_mixing_coefficients[a][k] = stream.read16(); 
+          syntax.component_mixing_coefficients[a][k] = stream.read(16); 
         } else {
           syntax.component_mixing_coefficients[a][k] = 0;
         }
@@ -135,7 +126,7 @@ function parseComponentMixing(stream, syntax, a) {
 }
 
 // Table C.5 — Gain curve structure syntax
-function parseGainCurve(stream, syntax, a) {
+let parseGainCurve = function(stream, syntax, a) {
     if (a === 0 || syntax.has_common_curve_params_flag === 0) {
         syntax.gain_curve_num_control_points_minus_1[a] = stream.read(5);
         syntax.gain_curve_use_pchip_slope_flag[a] = stream.read(1);
@@ -207,28 +198,60 @@ function compactJson(data, indent = 2) {
   return format(data, 0);
 }
 
+let syntaxToJson = function() {
+  // TODO:
+  // Use this function to generate the metadata set according to the
+  // semantics section
+  // https://doc.smpte-doc.org/st2094-50-private/main/#sec-binary-semantics
+}
 
+const kEditingColor = "white";
+const kErrorColor = "rgb(255, 200, 200)";
+const kPassColor = "rgb(200, 255, 200)";
+const kOutdatedColor = "rgb(200, 200, 200)";
 
+let onBinaryChanged = function() {
+  Binary.style.backgroundColor = kEditingColor;
+  Syntax.style.backgroundColor = kOutdatedColor;
+  Semantics.style.backgroundColor = kOutdatedColor;
+};
 
-let main = function() {
-  const list = BinHex.value.split(',').map(item => Number(item.trim()));
+let onSyntaxChanged = function() {
+  Binary.style.backgroundColor = kOutdatedColor;
+  Semantics.style.backgroundColor = kOutdatedColor;
+};
+
+let onParseButtonPressed = function() {
+  const list = Binary.value.split(',').map(item => Number(item.trim()));
   const buffer = new Uint8Array(list);
   let syntax = {}
   try {
-    parseApplicationInfo(new BitStream(buffer), syntax);
-    Syntax.style.backgroundColor = "rgb(200, 255, 200)";
+    parseApplicationInfo(new ReadBitStream(buffer), syntax);
+    Syntax.style.backgroundColor = kPassColor;
   } catch (e) {
-    Syntax.style.backgroundColor = "rgb(255, 200, 200)";
+    Syntax.style.backgroundColor = kErrorColor;
   }
   Syntax.textContent = compactJson(syntax);
+};
+
+let onAnalyzeButtonPressed = function() {
+  let metadata = {};
+  Semantics.textContent = compactJson(metadata);
+  Syntax.style.backgroundColor = kPassColor;
+}
+
+
+let main = function() {
+  Syntax.style.backgroundColor = kOutdatedColor;
 }
 
 </script>
 </head>
 <body onload="main();">
-<h2>Input data</h2>
-<p>Comma separated list of hex values, as of the form output by <code>xxd -i</code></p>.
-<textarea id="BinHex" rows=10, cols=120 oninput="main()">
+<h2>Binary</h2>
+<p>Comma separated list of hex values, as of the form output by <code>xxd -i</code>.</p>
+<p>
+<textarea id="Binary" rows=10, cols=120 oninput="onBinaryChanged();">
   0x00, 0xc0, 0x07, 0xd0, 0x4e, 0x20, 0x44, 0x00, 0x00, 0xc6, 0x92, 0x7c,
   0x30, 0xd4, 0x00, 0x00, 0x00, 0x27, 0x10, 0x46, 0x50, 0x27, 0x10, 0x00,
   0x18, 0x00, 0x00, 0x03, 0xe8, 0x07, 0xd0, 0x0b, 0xb8, 0x27, 0x10, 0x13,
@@ -239,11 +262,19 @@ let main = function() {
   0x10, 0x13, 0x88, 0x0f, 0xa0, 0x0f, 0xa0, 0x46, 0x50, 0x4a, 0xc6, 0x5b,
   0x11, 0x61, 0xa6,"
 </textarea>
+</p>
+<p>
+  <button id="Parse" onclick="onParseButtonPressed();">Parse</button> to update syntax.
+</p>
 </input>
 <h2>Syntax:</h2>
-<pre id="Syntax"></pre>
+<p>
+  <button id="Serialize" disabled>Serialize</button> to update binary.
+</p>
+<textarea id="Syntax" rows=10 cols=120 oninput="onSyntaxChanged();"></textarea>
+<p>
+  <button id="Analyze" onclick="onAnalyzeButtonPressed();">Analyze</button> to update semantics.
+</p>
 <h2>Semantics:</h2>
-<pre id="Semantics">
-  TODO
-</pre>
+<textarea id="Semantics" rows=10 cols=120 oninput="onSyntaxChanged();"></textarea>
 </body>
