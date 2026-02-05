@@ -249,18 +249,9 @@ let getRec2020Primaries = function() {
 let populateWithPCHIP = function(cp) {
   const N = cp.length;
 
-  // deal with it later.
-  for (let i = 0; i < N; ++i) {
-    cp[i].m = "TODO-PCHIP";
-  }
-  return;
-
-  if (N === 0) return;
-
   // Compute the interval width (h) and piecewise linear slope (s)
   const h = new Array(N - 1);
   const s = new Array(N - 1);
-
   for (let i = 0; i < N - 1; ++i) {
     h[i] = cp[i + 1].x - cp[i].x;
     // Calculating s immediately after h for efficiency
@@ -283,14 +274,11 @@ let populateWithPCHIP = function(cp) {
   // Populate internal control points
   for (let i = 1; i <= N - 2; ++i) {
     // Formula (C.9)
-    // If slopes have opposite signs, set slope to 0 to prevent overshoot (monotonicty)
     if (s[i - 1] * s[i] < 0.0) {
       cp[i].m = 0.0;
     } else {
       const num = 3 * (h[i - 1] + h[i]) * s[i - 1] * s[i];
       const den = (2 * h[i - 1] + h[i]) * s[i - 1] + (h[i - 1] + 2 * h[i]) * s[i];
-
-      // Avoid division by zero if both slopes are zero
       cp[i].m = (den === 0) ? 0.0 : num / den;
     }
   }
@@ -298,8 +286,6 @@ let populateWithPCHIP = function(cp) {
 
 let populateWithRWTMO = function(hatm) {
   hatm.gain_application_space_primaries = getRec2020Primaries();
-  hatm.alternate_images = "TODO-RWMTO";
-  return;
 
   if (hatm.baseline_hdr_headroom === 0) {
     hatm.alternate_images = [];
@@ -335,22 +321,17 @@ let populateWithRWTMO = function(hatm) {
 
     const xA = xKnee - 2 * xMid + xMax;
     const yA = yKnee - 2 * yMid + yMax;
-    const xB = 2 * xMid - 2 * xKnee;
-    const yB = 2 * yMid - 2 * yKnee;
+    const xB = 2 * (xMid - xKnee);
+    const yB = 2 * (yMid - yKnee);
     const xC = xKnee;
     const yC = yKnee;
 
     alt.gain_curve = {
       control_points: []
     };
-    alt.gain_curve.control_points.push({
-      x: 0,
-      y: Math.log2(yWhite),
-      m: 0,
-    });
-
-    for (let c = 1; c < 9; ++c) {
-      const t = (c - 1) / 7;
+    const N = 8;
+    for (let c = 0; c < N; ++c) {
+      const t = c / (N - 1);
       const x = xC + t * (xB + t * xA);
       const y = yC + t * (yB + t * yA);
       const m = (2 * yA * t + yB) / (2 * xA * t + xB);
@@ -382,6 +363,7 @@ let syntaxToMetadata = function(syntax, metadata) {
     hatm.baseline_hdr_headroom = uint16_to_float(syntax.baseline_hdr_headroom, 0, 60000, 0, 10000.0);
 
     if (syntax.use_reference_white_tone_mapping_flag === 0) {
+      console.log('mode: ' + syntax.gain_application_space_chromaticities_mode);
       if (syntax.gain_application_space_chromaticities_mode === 0) {
         hatm.gain_application_space_primaries = getRec709Primaries();
       } else if (syntax.gain_application_space_chromaticities_mode === 1) {
@@ -418,11 +400,20 @@ let syntaxToMetadata = function(syntax, metadata) {
 
           alt.color_gain_function = {}
           if (syntax.component_mixing_type[a] === 0) {
-            alt.color_gain_function.component_mixing = "TODO-MAX";
+            alt.color_gain_function.component_mixing = {
+              red: 0, green: 0, blue: 0, min: 0, component: 0,
+              max: 1,
+            };
           } else if (syntax.component_mixing_type[a] === 1) {
-            alt.color_gain_function.component_mixing = "TODO-COMPONENT";
+            alt.color_gain_function.component_mixing = {
+              red: 0, green: 0, blue: 0, max: 0, min: 0,
+              component: 1,
+            };
           } else if (syntax.component_mixing_type[a] === 2) {
-            alt.color_gain_function.component_mixing = "TODO-1/3-1/6";
+            alt.color_gain_function.component_mixing = {
+              red: 1/6, green: 1/6, blue: 1/6, max: 1/2,
+              min: 0, component: 0,
+            };
           } else if (syntax.component_mixing_type[a] === 3) {
             alt.color_gain_function.component_mixing = {
               red: uint16_to_float(syntax.component_mixing_coefficients[a][0], 0, 50000, 0, 50000.0),
@@ -460,7 +451,6 @@ let syntaxToMetadata = function(syntax, metadata) {
     }
     metadata.adaptive_tone_map = hatm;
   }
-  return metadata;
 }
 
 const kEditingColor = "white";
@@ -468,38 +458,64 @@ const kErrorColor = "rgb(255, 200, 200)";
 const kPassColor = "rgb(200, 255, 200)";
 const kOutdatedColor = "rgb(200, 200, 200)";
 
-let onBinaryChanged = function() {
+let resizeAll = function() {
   Binary.style.height = "auto";
   Binary.style.height = (Binary.scrollHeight) + "px";
-  Binary.style.backgroundColor = kEditingColor;
-  Syntax.style.backgroundColor = kOutdatedColor;
-  Semantics.style.backgroundColor = kOutdatedColor;
+  Syntax.style.height = "auto";
+  Syntax.style.height = (Syntax.scrollHeight) + "px";
+  Semantics.style.height = "auto";
+  Semantics.style.height = (Semantics.scrollHeight) + "px";
+}
 
-  // Parse the syntax
-  const list = Binary.value.split(',').map(item => Number(item.trim()));
-  const buffer = new Uint8Array(list);
-  let syntax = {};
-  let metadata= {};
+let onBinaryChanged = function() {
+  Binary.style.backgroundColor = kEditingColor;
+  Syntax.value = 'error';
+  Syntax.style.backgroundColor = kErrorColor;
+  Semantics.value = 'error';
+  Semantics.style.backgroundColor = kErrorColor;
+
   try {
+    // Parse the syntax
+    const list = Binary.value.split(',').map(item => Number(item.trim()));
+    const buffer = new Uint8Array(list);
+    let syntax = {};
+    let metadata = {};
+ 
+ 
     parseApplicationInfo(new ReadBitStream(buffer), syntax);
     Syntax.style.backgroundColor = kPassColor;
-
-    // Parse semantics
-    try {
-      Semantics.textContent = syntaxToMetadata(syntax, metadata);
-      Semantics.style.backgroundColor = kPassColor;
-    } catch (e) {
-      Semantics.textContent = 'error';
-      Semantics.style.backgroundColor = kErrorColor;
-    }
+    Syntax.value = compactJson(syntax);
+ 
+    Semantics.style.backgroundColor = kPassColor;
+    syntaxToMetadata(syntax, metadata);
+    Semantics.value = compactJson(metadata);
+    resizeAll();
   } catch (e) {
+    throw(e);
+  }
+};
+
+let onSyntaxChanged = function() {
+  try {
+    Binary.style.backgroundColor = kErrorColor;
     Syntax.style.backgroundColor = kErrorColor;
     Semantics.style.backgroundColor = kErrorColor;
-  }
-  Syntax.textContent = compactJson(syntax);
-  Semantics.textContent = compactJson(metadata);
 
-};
+    Binary.value = "serialization not implemented";
+    Semantics.value = "error";
+ 
+    let syntax = JSON.parse(Syntax.value);
+    Syntax.style.backgroundColor = kEditingColor;
+
+    let metadata = {};
+    syntaxToMetadata(syntax, metadata);
+    Semantics.value = compactJson(metadata);
+    Semantics.style.backgroundColor = kPassColor;
+    resizeAll();
+  } catch (e) {
+    throw(e);
+  }
+}
 
 let main = function() {
   onBinaryChanged();
@@ -525,7 +541,7 @@ let main = function() {
 </p>
 </input>
 <h2>Syntax:</h2>
-<pre id="Syntax"></pre>
+<textarea id="Syntax" oninput = "onSyntaxChanged();"></textarea>
 <h2>Semantics:</h2>
-<pre id="Semantics"></pre>
+<textarea id="Semantics"></textarea>
 </body>
