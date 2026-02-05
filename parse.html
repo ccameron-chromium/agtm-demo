@@ -459,12 +459,9 @@ const kPassColor = "rgb(200, 255, 200)";
 const kOutdatedColor = "rgb(200, 200, 200)";
 
 let resizeAll = function() {
-  Binary.style.height = "auto";
-  Binary.style.height = (Binary.scrollHeight) + "px";
-  Syntax.style.height = "auto";
-  Syntax.style.height = (Syntax.scrollHeight) + "px";
-  Semantics.style.height = "auto";
-  Semantics.style.height = (Semantics.scrollHeight) + "px";
+  Binary.rows = Binary.value.split('\n').length;
+  Syntax.rows = Syntax.value.split('\n').length;
+  Semantics.rows = Semantics.value.split('\n').length;
 }
 
 let onBinaryChanged = function() {
@@ -542,6 +539,6 @@ let main = function() {
 </input>
 <h2>Syntax:</h2>
 <textarea id="Syntax" oninput = "onSyntaxChanged();"></textarea>
-<h2>Semantics:</h2>
+<h2>Semantics (JSON representation of Color Volume Transform):</h2>
 <textarea id="Semantics"></textarea>
 </body>
