@@ -1,4 +1,14 @@
 <head>
+<style>
+textarea {
+  width: 100%;
+  min-height: 50px;
+  padding: 10px;
+  resize: none; /* Disable the manual resize handle */
+  overflow: hidden; /* Hide the scrollbar */
+  box-sizing: border-box;
+}
+</style>
 <script>
 
 class ReadBitStream {
@@ -163,7 +173,7 @@ function compactJson(data, indent = 2) {
     );
   };
 
-  function format(curr, level) {
+  function format(curr, level, flatten = false) {
     const currentIndent = ' '.repeat(level * indent);
     const nextIndent = ' '.repeat((level + 1) * indent);
 
@@ -175,7 +185,7 @@ function compactJson(data, indent = 2) {
       }
       
       // Case 2: Array of Objects/Arrays -> Standard multiline formatting
-      const items = curr.map(v => format(v, level + 1));
+      const items = curr.map(v => format(v, level + 1, flatten));
       return `[\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}]`;
     }
     
@@ -184,11 +194,22 @@ function compactJson(data, indent = 2) {
       if (keys.length === 0) return '{}';
       
       const items = keys.map(key => {
-        const val = format(curr[key], level + 1);
+        let nextFlatten = false;
+        nextFlatten |= key === "component_mixing";
+        nextFlatten |= key === "control_points";
+        nextFlatten |= key === "red";
+        nextFlatten |= key === "green";
+        nextFlatten |= key === "blue";
+        nextFlatten |= key === "white";
+        const val = format(curr[key], level + 1, nextFlatten);
         // Ensure keys are quoted strings
         return `"${key}": ${val}`;
       });
-      return `{\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}}`;
+      if (flatten) {
+        return `{ ${items.join(`, `)} }`;
+      } else {
+        return `{\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}}`;
+      }
     }
 
     // Primitives (strings, numbers, booleans, null)
@@ -198,14 +219,51 @@ function compactJson(data, indent = 2) {
   return format(data, 0);
 }
 
-let syntaxToJson = function(syntax) {
+let getRec709Primaries = function() {
+  return {
+    red: { x: 0.64, y: 0.33 },
+    green: { x: 0.3, y: 0.6 },
+    blue: { x: 0.15, y: 0.06 },
+    white: { x: 0.3127, y: 0.329 },
+  };
+}
+
+let getP3Primaries = function() {
+  return {
+    red: { x: 0.68, y: 0.32 },
+    green: { x: 0.265, y: 0.69 },
+    blue: { x: 0.15, y: 0.06 },
+    white: { x: 0.3127, y: 0.329 },
+  };
+}
+
+let getRec2020Primaries = function() {
+  return {
+    red: { x: 0.708, y: 0.292 },
+    green: { x: 0.170, y: 0.797},
+    blue: { x: 0.131, y: 0.046 },
+    white: { x: 0.3127, y: 0.329 },
+  };
+}
+
+let populateWithPCHIP = function(control_points) {
+  for (let i = 0; i < control_points.length; ++i) {
+    control_points[i].m = "TODO-PCHIP";
+  }
+}
+
+let populateWithRWTMO = function(hatm) {
+  hatm.gain_application_space_primaries = getRec2020Primaries();
+  hatm.alternate_images = "TODO-RWTMO";
+}
+
+let syntaxToMetadata = function(syntax, metadata) {
   let uint16_to_float = function(v, clamp_min, clamp_max, offset, scale) {
     if (v < clamp_min) v = clamp_min;
     if (v > clamp_max) v = clamp_max;
     return (v - offset) / scale;
   }
 
-  let metadata = {};
   if (syntax.has_custom_hdr_reference_white_flag === 1) {
     metadata.hdr_reference_white = uint16_to_float(syntax.hdr_reference_white, 1, 50000, 0, 5.0);
   } else {
@@ -217,16 +275,30 @@ let syntaxToJson = function(syntax) {
     hatm.baseline_hdr_headroom = uint16_to_float(syntax.baseline_hdr_headroom, 0, 60000, 0, 10000.0);
 
     if (syntax.use_reference_white_tone_mapping_flag === 0) {
-      if (syntax.gain_application_space_chromaticities_mode === 3) {
+      if (syntax.gain_application_space_chromaticities_mode === 0) {
+        hatm.gain_application_space_primaries = getRec709Primaries();
+      } else if (syntax.gain_application_space_chromaticities_mode === 1) {
+        hatm.gain_application_space_primaries = getP3Primaries();
+      } else if (syntax.gain_application_space_chromaticities_mode === 2) {
+        hatm.gain_application_space_primaries = getRec2020Primaries();
+      } else if (syntax.gain_application_space_chromaticities_mode === 3) {
         hatm.gain_application_space_primaries = {
-          rx: uint16_to_float(syntax.gain_application_space_chromaticities[0], 0, 50000, 0, 50000.0),
-          ry: uint16_to_float(syntax.gain_application_space_chromaticities[1], 0, 50000, 0, 50000.0),
-          gx: uint16_to_float(syntax.gain_application_space_chromaticities[2], 0, 50000, 0, 50000.0),
-          gy: uint16_to_float(syntax.gain_application_space_chromaticities[3], 0, 50000, 0, 50000.0),
-          bx: uint16_to_float(syntax.gain_application_space_chromaticities[4], 0, 50000, 0, 50000.0),
-          by: uint16_to_float(syntax.gain_application_space_chromaticities[5], 0, 50000, 0, 50000.0),
-          wx: uint16_to_float(syntax.gain_application_space_chromaticities[6], 0, 50000, 0, 50000.0),
-          wy: uint16_to_float(syntax.gain_application_space_chromaticities[7], 0, 50000, 0, 50000.0),
+          red: {
+            x: uint16_to_float(syntax.gain_application_space_chromaticities[0], 0, 50000, 0, 50000.0),
+            y: uint16_to_float(syntax.gain_application_space_chromaticities[1], 0, 50000, 0, 50000.0),
+          },
+          green: {
+            x: uint16_to_float(syntax.gain_application_space_chromaticities[2], 0, 50000, 0, 50000.0),
+            y: uint16_to_float(syntax.gain_application_space_chromaticities[3], 0, 50000, 0, 50000.0),
+          },
+          blue: {
+            x: uint16_to_float(syntax.gain_application_space_chromaticities[4], 0, 50000, 0, 50000.0),
+            y: uint16_to_float(syntax.gain_application_space_chromaticities[5], 0, 50000, 0, 50000.0),
+          },
+          white: {
+            x: uint16_to_float(syntax.gain_application_space_chromaticities[6], 0, 50000, 0, 50000.0),
+            y: uint16_to_float(syntax.gain_application_space_chromaticities[7], 0, 50000, 0, 50000.0),
+          },
         };
       }
 
@@ -249,7 +321,6 @@ let syntaxToJson = function(syntax) {
           }
 
           alt.gain_curve = {
-            use_pchip_slope: syntax.gain_curve_use_pchip_slope_flag[a] === 1,
             control_points: []
           };
           const sign = hatm.baseline_hdr_headroom < alt.hdr_headroom ? 1.0 : -1.0;
@@ -258,15 +329,20 @@ let syntaxToJson = function(syntax) {
               x: uint16_to_float(syntax.gain_curve_control_points_x[a][c], 0, 64000, 0, 1000.0),
               y: sign * uint16_to_float(syntax.gain_curve_control_points_y[a][c], 0, 60000, 0, 10000.0),
             };
-            if (!alt.gain_curve.use_pchip_slope) {
+            if (syntax.gain_curve_use_pchip_slope_flag[a] === 0) {
               const theta = uint16_to_float(syntax.gain_curve_control_points_theta[a][c], 1, 35999, 18000, 36000.0 / Math.PI);
-              cp.slope = Math.tan(theta);
+              cp.m = Math.tan(theta);
             }
             alt.gain_curve.control_points.push(cp);
+          }
+          if (syntax.gain_curve_use_pchip_slope_flag[a] === 1) {
+            populateWithPCHIP(alt.gain_curve.control_points);
           }
           hatm.alternate_images.push(alt);
         }
       }
+    } else {
+      populateWithRWTMO(hatm);
     }
     metadata.adaptive_tone_map = hatm;
   }
@@ -279,39 +355,40 @@ const kPassColor = "rgb(200, 255, 200)";
 const kOutdatedColor = "rgb(200, 200, 200)";
 
 let onBinaryChanged = function() {
+  Binary.style.height = "auto";
+  Binary.style.height = (Binary.scrollHeight) + "px";
   Binary.style.backgroundColor = kEditingColor;
   Syntax.style.backgroundColor = kOutdatedColor;
   Semantics.style.backgroundColor = kOutdatedColor;
-};
 
-let onSyntaxChanged = function() {
-  Binary.style.backgroundColor = kOutdatedColor;
-  Semantics.style.backgroundColor = kOutdatedColor;
-};
-
-let onParseButtonPressed = function() {
+  // Parse the syntax
   const list = Binary.value.split(',').map(item => Number(item.trim()));
   const buffer = new Uint8Array(list);
-  let syntax = {}
+  let syntax = {};
+  let metadata= {};
   try {
     parseApplicationInfo(new ReadBitStream(buffer), syntax);
     Syntax.style.backgroundColor = kPassColor;
+
+    // Parse semantics
+    try {
+      Semantics.textContent = syntaxToMetadata(syntax, metadata);
+      Semantics.style.backgroundColor = kPassColor;
+    } catch (e) {
+      Semantics.textContent = 'error';
+      Semantics.style.backgroundColor = kErrorColor;
+    }
   } catch (e) {
     Syntax.style.backgroundColor = kErrorColor;
+    Semantics.style.backgroundColor = kErrorColor;
   }
   Syntax.textContent = compactJson(syntax);
+  Semantics.textContent = compactJson(metadata);
+
 };
 
-let onAnalyzeButtonPressed = function() {
-  let syntax = JSON.parse(Syntax.textContent);
-  let metadata = syntaxToJson(syntax);
-  Semantics.textContent = compactJson(metadata);
-  Syntax.style.backgroundColor = kPassColor;
-}
-
-
 let main = function() {
-  Syntax.style.backgroundColor = kOutdatedColor;
+  onBinaryChanged();
 }
 
 </script>
@@ -332,18 +409,9 @@ let main = function() {
   0x11, 0x61, 0xa6,"
 </textarea>
 </p>
-<p>
-  <button id="Parse" onclick="onParseButtonPressed();">Parse</button> to update syntax.
-</p>
 </input>
 <h2>Syntax:</h2>
-<p>
-  <button id="Serialize" disabled>Serialize</button> to update binary.
-</p>
-<textarea id="Syntax" rows=10 cols=120 oninput="onSyntaxChanged();"></textarea>
-<p>
-  <button id="Analyze" onclick="onAnalyzeButtonPressed();">Analyze</button> to update semantics.
-</p>
+<pre id="Syntax"></pre>
 <h2>Semantics:</h2>
-<textarea id="Semantics" rows=10 cols=120 oninput="onSyntaxChanged();"></textarea>
+<pre id="Semantics"></pre>
 </body>
