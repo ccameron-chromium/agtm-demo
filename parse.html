@@ -1,0 +1,249 @@
+<head>
+<script>
+
+class BitStream {
+    constructor(uint8Array) {
+        this.bytes = uint8Array;
+        this.byteIndex = 0;
+        this.bitIndex = 0; // 0..7, MSB first
+    }
+    read(bits) {
+        let value = 0;
+        for (let i = 0; i < bits; i++) {
+            if (this.byteIndex >= this.bytes.length) {
+                throw new Error("End of stream reached");
+            }
+            const byte = this.bytes[this.byteIndex];
+            const bit = (byte >> (7 - this.bitIndex)) & 1;
+            value = (value << 1) | bit;
+
+            this.bitIndex++;
+            if (this.bitIndex === 8) {
+                this.bitIndex = 0;
+                this.byteIndex++;
+            }
+        }
+        return value;
+    }
+    read16() {
+        return this.read(16);
+    }
+    readReservedZero(bits) {
+      const value = this.read(bits);
+      if (value !== 0) {
+        throw new Error("Expected zero but got " + value);
+      }
+    }
+};
+
+// Table C.1 — Application #5 syntax structure
+function parseApplicationInfo(stream, syntax) {
+    syntax.application_version = stream.read(3);
+    syntax.minimum_application_version = stream.read(3);
+    syntax.reserved_zero_c1 = stream.read(2);
+    parseColorVolumeTransform(stream, syntax);
+}
+
+
+// Table C.2 — Color volume transform syntax structure
+function parseColorVolumeTransform(stream, syntax) {
+    syntax.has_custom_hdr_reference_white_flag = stream.read(1);
+    syntax.has_adaptive_tone_map_flag = stream.read(1);
+    syntax.reserved_zero_c2 = stream.read(6);
+
+    if (syntax.has_custom_hdr_reference_white_flag === 1) {
+        syntax.hdr_reference_white = stream.read(16);
+    }
+    if (syntax.has_adaptive_tone_map_flag === 1) {
+        parseAdaptiveToneMap(stream, syntax);
+    }
+}
+
+// Table C.3 — Headroom-adaptive tone map structure syntax
+function parseAdaptiveToneMap(stream, syntax) {
+    syntax.baseline_hdr_headroom = stream.read(16);
+    syntax.use_reference_white_tone_mapping_flag = stream.read(1);
+
+    if (syntax.use_reference_white_tone_mapping_flag === 0) {
+        syntax.num_alternate_images = stream.read(3);
+        syntax.gain_application_space_chromaticities_mode = stream.read(2);
+        syntax.has_common_component_mix_params_flag = stream.read(1);
+        syntax.has_common_curve_params_flag = stream.read(1);
+        
+        if (syntax.gain_application_space_chromaticities_mode === 3) {
+            syntax.gain_application_space_chromaticities = [];
+            for (let r = 0; r < 8; r++) {
+                syntax.gain_application_space_chromaticities[r] = stream.read(16);
+            }
+        }
+
+        if (syntax.num_alternate_images > 0) {
+            syntax.alternate_hdr_headrooms = [];
+            syntax.component_mixing_type = [];
+            syntax.has_component_mixing_coefficient_flag = [];
+            syntax.component_mixing_coefficients = [];
+            syntax.gain_curve_num_control_points_minus_1 = [];
+            syntax.gain_curve_use_pchip_slope_flag = [];
+            syntax.gain_curve_control_points_x = [];
+            syntax.gain_curve_control_points_y = [];
+            syntax.gain_curve_control_points_theta = [];
+            syntax.reserved_zero_c4 = []
+            syntax.reserved_zero_c5 = []
+
+            const num_alternate_images_loop_limit = Math.min(syntax.num_alternate_images, 4);
+            for (let a = 0; a < num_alternate_images_loop_limit; a++) {
+                syntax.alternate_hdr_headrooms[a] = stream.read(16);
+                parseComponentMixing(stream, syntax, a);
+                parseGainCurve(stream, syntax, a);
+            }
+        }
+    } else {
+        syntax.reserved_zero_c3 = stream.read(7);
+    }
+}
+
+// Table C.4 — Component mixing function structure syntax
+function parseComponentMixing(stream, syntax, a) {
+  if (a === 0 || syntax.has_common_component_mix_params_flag === 0) {
+    syntax.component_mixing_type[a] = stream.read(2);
+
+    if (syntax.component_mixing_type[a] !== 3) {
+      syntax.has_component_mixing_coefficient_flag[a] = null;
+      syntax.component_mixing_coefficients[a] = null;
+      syntax.reserved_zero_c4[a] = stream.read(6);
+    } else {
+      syntax.has_component_mixing_coefficient_flag[a] = [];
+      syntax.component_mixing_coefficients[a] = [];
+      syntax.reserved_zero_c4[a] = null;
+      for (let k = 0; k < 6; k++) {
+        syntax.has_component_mixing_coefficient_flag[a][k] = stream.read(1);
+      }
+      for (let k = 0; k < 6; k++) {
+        if (syntax.has_component_mixing_coefficient_flag[a][k] === 1) {
+          syntax.component_mixing_coefficients[a][k] = stream.read16(); 
+        } else {
+          syntax.component_mixing_coefficients[a][k] = 0;
+        }
+      }
+    }
+  } else {
+    syntax.component_mixing_coefficients[a] = [];
+    for (let k = 0; k < 6; k++) {
+      syntax.component_mixing_coefficients[a][k] = syntax.component_mixing_coefficients[0][k];
+    }
+  }
+}
+
+// Table C.5 — Gain curve structure syntax
+function parseGainCurve(stream, syntax, a) {
+    if (a === 0 || syntax.has_common_curve_params_flag === 0) {
+        syntax.gain_curve_num_control_points_minus_1[a] = stream.read(5);
+        syntax.gain_curve_use_pchip_slope_flag[a] = stream.read(1);
+        syntax.reserved_zero_c5[a] = stream.read(2);
+
+        syntax.gain_curve_control_points_x[a] = [];
+        for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+            syntax.gain_curve_control_points_x[a][c] = stream.read(16);
+        }
+    } else {
+        syntax.reserved_zero_c5[a] = null;
+        syntax.gain_curve_num_control_points_minus_1[a] = syntax.gain_curve_num_control_points_minus_1[0];
+        syntax.gain_curve_use_pchip_slope_flag[a] = syntax.gain_curve_use_pchip_slope_flag[0];
+        syntax.gain_curve_control_points_x[a] = syntax.gain_curve_control_points_x[0];
+    }
+    syntax.gain_curve_control_points_y[a] = [];
+    for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+        syntax.gain_curve_control_points_y[a][c] = stream.read(16);
+    }
+    if (syntax.gain_curve_use_pchip_slope_flag[a] === 0) {
+        syntax.gain_curve_control_points_theta[a] = [];
+        for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+            syntax.gain_curve_control_points_theta[a][c] = stream.read(16);
+        }
+    }
+}
+ 
+// From Gemini:
+function compactJson(data, indent = 2) {
+  // Helper to determine if an array only contains primitives
+  const isFlatArray = (arr) => {
+    return arr.every(item => 
+      typeof item !== 'object' || item === null
+    );
+  };
+
+  function format(curr, level) {
+    const currentIndent = ' '.repeat(level * indent);
+    const nextIndent = ' '.repeat((level + 1) * indent);
+
+    if (Array.isArray(curr)) {
+      // Case 1: Array of primitives -> Single line: [1, 2, 3]
+      if (isFlatArray(curr)) {
+        // JSON.stringify gives [1,2,3], we add spaces after commas for readability
+        return JSON.stringify(curr).replace(/,/g, ', ');
+      }
+      
+      // Case 2: Array of Objects/Arrays -> Standard multiline formatting
+      const items = curr.map(v => format(v, level + 1));
+      return `[\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}]`;
+    }
+    
+    if (typeof curr === 'object' && curr !== null) {
+      const keys = Object.keys(curr);
+      if (keys.length === 0) return '{}';
+      
+      const items = keys.map(key => {
+        const val = format(curr[key], level + 1);
+        // Ensure keys are quoted strings
+        return `"${key}": ${val}`;
+      });
+      return `{\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}}`;
+    }
+
+    // Primitives (strings, numbers, booleans, null)
+    return JSON.stringify(curr);
+  }
+
+  return format(data, 0);
+}
+
+
+
+
+let main = function() {
+  const list = BinHex.value.split(',').map(item => Number(item.trim()));
+  const buffer = new Uint8Array(list);
+  let syntax = {}
+  try {
+    parseApplicationInfo(new BitStream(buffer), syntax);
+    Syntax.style.backgroundColor = "rgb(200, 255, 200)";
+  } catch (e) {
+    Syntax.style.backgroundColor = "rgb(255, 200, 200)";
+  }
+  Syntax.textContent = compactJson(syntax);
+}
+
+</script>
+</head>
+<body onload="main();">
+<h2>Input data</h2>
+<p>Comma separated list of hex values, as of the form output by <code>xxd -i</code></p>.
+<textarea id="BinHex" rows=10, cols=120 oninput="main()">
+  0x00, 0xc0, 0x07, 0xd0, 0x4e, 0x20, 0x44, 0x00, 0x00, 0xc6, 0x92, 0x7c,
+  0x30, 0xd4, 0x00, 0x00, 0x00, 0x27, 0x10, 0x46, 0x50, 0x27, 0x10, 0x00,
+  0x18, 0x00, 0x00, 0x03, 0xe8, 0x07, 0xd0, 0x0b, 0xb8, 0x27, 0x10, 0x13,
+  0x88, 0x0f, 0xa0, 0x0b, 0xb8, 0x46, 0x50, 0x4a, 0xc6, 0x4f, 0x26, 0x53,
+  0x5c, 0x75, 0x30, 0x40, 0x08, 0x00, 0x00, 0x03, 0xe8, 0x27, 0x10, 0x13,
+  0x88, 0x46, 0x50, 0x4a, 0xc6, 0x9c, 0x40, 0xf8, 0x3a, 0x98, 0x75, 0x30,
+  0x13, 0x88, 0x18, 0x00, 0x00, 0x03, 0xe8, 0x07, 0xd0, 0x07, 0xd0, 0x27,
+  0x10, 0x13, 0x88, 0x0f, 0xa0, 0x0f, 0xa0, 0x46, 0x50, 0x4a, 0xc6, 0x5b,
+  0x11, 0x61, 0xa6,"
+</textarea>
+</input>
+<h2>Syntax:</h2>
+<pre id="Syntax"></pre>
+<h2>Semantics:</h2>
+<pre id="Semantics">
+  TODO
+</pre>
+</body>
