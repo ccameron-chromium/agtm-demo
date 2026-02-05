@@ -198,11 +198,79 @@ function compactJson(data, indent = 2) {
   return format(data, 0);
 }
 
-let syntaxToJson = function() {
-  // TODO:
-  // Use this function to generate the metadata set according to the
-  // semantics section
-  // https://doc.smpte-doc.org/st2094-50-private/main/#sec-binary-semantics
+let syntaxToJson = function(syntax) {
+  let uint16_to_float = function(v, clamp_min, clamp_max, offset, scale) {
+    if (v < clamp_min) v = clamp_min;
+    if (v > clamp_max) v = clamp_max;
+    return (v - offset) / scale;
+  }
+
+  let metadata = {};
+  if (syntax.has_custom_hdr_reference_white_flag === 1) {
+    metadata.hdr_reference_white = uint16_to_float(syntax.hdr_reference_white, 1, 50000, 0, 5.0);
+  } else {
+    metadata.hdr_reference_white = 1000.0;
+  }
+
+  if (syntax.has_adaptive_tone_map_flag === 1) {
+    let hatm = {};
+    hatm.baseline_hdr_headroom = uint16_to_float(syntax.baseline_hdr_headroom, 0, 60000, 0, 10000.0);
+
+    if (syntax.use_reference_white_tone_mapping_flag === 0) {
+      if (syntax.gain_application_space_chromaticities_mode === 3) {
+        hatm.gain_application_space_primaries = {
+          rx: uint16_to_float(syntax.gain_application_space_chromaticities[0], 0, 50000, 0, 50000.0),
+          ry: uint16_to_float(syntax.gain_application_space_chromaticities[1], 0, 50000, 0, 50000.0),
+          gx: uint16_to_float(syntax.gain_application_space_chromaticities[2], 0, 50000, 0, 50000.0),
+          gy: uint16_to_float(syntax.gain_application_space_chromaticities[3], 0, 50000, 0, 50000.0),
+          bx: uint16_to_float(syntax.gain_application_space_chromaticities[4], 0, 50000, 0, 50000.0),
+          by: uint16_to_float(syntax.gain_application_space_chromaticities[5], 0, 50000, 0, 50000.0),
+          wx: uint16_to_float(syntax.gain_application_space_chromaticities[6], 0, 50000, 0, 50000.0),
+          wy: uint16_to_float(syntax.gain_application_space_chromaticities[7], 0, 50000, 0, 50000.0),
+        };
+      }
+
+      if (syntax.num_alternate_images > 0) {
+        hatm.alternate_images = [];
+        const num_alternate_images_loop_limit = Math.min(syntax.num_alternate_images, 4);
+        for (let a = 0; a < num_alternate_images_loop_limit; a++) {
+          let alt = {};
+          alt.hdr_headroom = uint16_to_float(syntax.alternate_hdr_headrooms[a], 0, 60000, 0, 10000.0);
+
+          if (syntax.component_mixing_type[a] === 3) {
+            alt.component_mixing = {
+              red: uint16_to_float(syntax.component_mixing_coefficients[a][0], 0, 50000, 0, 50000.0),
+              green: uint16_to_float(syntax.component_mixing_coefficients[a][1], 0, 50000, 0, 50000.0),
+              blue: uint16_to_float(syntax.component_mixing_coefficients[a][2], 0, 50000, 0, 50000.0),
+              max: uint16_to_float(syntax.component_mixing_coefficients[a][3], 0, 50000, 0, 50000.0),
+              min: uint16_to_float(syntax.component_mixing_coefficients[a][4], 0, 50000, 0, 50000.0),
+              component: uint16_to_float(syntax.component_mixing_coefficients[a][5], 0, 50000, 0, 50000.0),
+            };
+          }
+
+          alt.gain_curve = {
+            use_pchip_slope: syntax.gain_curve_use_pchip_slope_flag[a] === 1,
+            control_points: []
+          };
+          const sign = hatm.baseline_hdr_headroom < alt.hdr_headroom ? 1.0 : -1.0;
+          for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+            let cp = {
+              x: uint16_to_float(syntax.gain_curve_control_points_x[a][c], 0, 64000, 0, 1000.0),
+              y: sign * uint16_to_float(syntax.gain_curve_control_points_y[a][c], 0, 60000, 0, 10000.0),
+            };
+            if (!alt.gain_curve.use_pchip_slope) {
+              const theta = uint16_to_float(syntax.gain_curve_control_points_theta[a][c], 1, 35999, 18000, 36000.0 / Math.PI);
+              cp.slope = Math.tan(theta);
+            }
+            alt.gain_curve.control_points.push(cp);
+          }
+          hatm.alternate_images.push(alt);
+        }
+      }
+    }
+    metadata.adaptive_tone_map = hatm;
+  }
+  return metadata;
 }
 
 const kEditingColor = "white";
@@ -235,7 +303,8 @@ let onParseButtonPressed = function() {
 };
 
 let onAnalyzeButtonPressed = function() {
-  let metadata = {};
+  let syntax = JSON.parse(Syntax.textContent);
+  let metadata = syntaxToJson(syntax);
   Semantics.textContent = compactJson(metadata);
   Syntax.style.backgroundColor = kPassColor;
 }
