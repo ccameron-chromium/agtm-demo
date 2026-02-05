@@ -246,9 +246,47 @@ let getRec2020Primaries = function() {
   };
 }
 
-let populateWithPCHIP = function(control_points) {
-  for (let i = 0; i < control_points.length; ++i) {
-    control_points[i].m = "TODO-PCHIP";
+let populateWithPCHIP = function(cp) {
+  const N = cp.length;
+
+  if (N === 0) return;
+
+  // Compute the interval width (h) and piecewise linear slope (s)
+  const h = new Array(N - 1);
+  const s = new Array(N - 1);
+
+  for (let i = 0; i < N - 1; ++i) {
+    h[i] = cp[i + 1].x - cp[i].x;
+    // Calculating s immediately after h for efficiency
+    s[i] = (cp[i + 1].y - cp[i].y) / h[i];
+  }
+
+  // Handle the boundary control points (Left and Right)
+  if (N >= 3) {
+    // Formula (C.7) and Formula (C.8)
+    cp[0].m = ((2 * h[0] + h[1]) * s[0] - h[0] * s[1]) / (h[0] + h[1]);
+    cp[N - 1].m = ((2 * h[N - 2] + h[N - 3]) * s[N - 2] - h[N - 2] * s[N - 3]) / (h[N - 2] + h[N - 3]);
+  } else if (N === 2) {
+    cp[0].m = s[0];
+    cp[N - 1].m = s[0];
+  } else {
+    // N is 1
+    cp[0].m = 0.0;
+  }
+
+  // Populate internal control points
+  for (let i = 1; i <= N - 2; ++i) {
+    // Formula (C.9)
+    // If slopes have opposite signs, set slope to 0 to prevent overshoot (monotonicty)
+    if (s[i - 1] * s[i] < 0.0) {
+      cp[i].m = 0.0;
+    } else {
+      const num = 3 * (h[i - 1] + h[i]) * s[i - 1] * s[i];
+      const den = (2 * h[i - 1] + h[i]) * s[i - 1] + (h[i - 1] + 2 * h[i]) * s[i];
+
+      // Avoid division by zero if both slopes are zero
+      cp[i].m = (den === 0) ? 0.0 : num / den;
+    }
   }
 }
 
