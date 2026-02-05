@@ -254,7 +254,68 @@ let populateWithPCHIP = function(control_points) {
 
 let populateWithRWTMO = function(hatm) {
   hatm.gain_application_space_primaries = getRec2020Primaries();
-  hatm.alternate_images = "TODO-RWTMO";
+
+  if (hatm.baseline_hdr_headroom === 0) {
+    hatm.alternate_images = [];
+    return;
+  }
+
+  hatm.alternate_images = [{}, {}];
+  hatm.alternate_images[0].hdr_headroom = 0;
+  hatm.alternate_images[1].hdr_headroom =
+      Math.log2(8 / 3) * Math.min(hatm.baseline_hdr_headroom / Math.log2(1000 / 203), 1);
+
+  for (let a = 0; a < 2; ++a) {
+    let alt = hatm.alternate_images[a];
+
+    alt.component_mixing = {
+      red: 0,
+      green: 0,
+      blue: 0,
+      max: 1,
+      min: 0,
+      component: 0,
+    };
+
+    const yWhite = (a === 1) ? 1 : 1 - 0.5 * Math.min(hatm.baseline_hdr_headroom / Math.log2(1000 / 203), 1);
+
+    const kappa = 0.65;
+    const xKnee = 1;
+    const yKnee = yWhite;
+    const xMax = Math.pow(2, hatm.baseline_hdr_headroom);
+    const yMax = Math.pow(2, alt.hdr_headroom);
+    const xMid = (1 - kappa) * xKnee + kappa * (xKnee * yMax / yKnee);
+    const yMid = (1 - kappa) * yKnee + kappa * yMax;
+
+    const xA = xKnee - 2 * xMid + xMax;
+    const yA = yKnee - 2 * yMid + yMax;
+    const xB = 2 * xMid - 2 * xKnee;
+    const yB = 2 * yMid - 2 * yKnee;
+    const xC = xKnee;
+    const yC = yKnee;
+
+    alt.gain_curve = {
+      control_points: []
+    };
+    alt.gain_curve.control_points.push({
+      x: 0,
+      y: Math.log2(yWhite),
+      m: 0,
+    });
+
+    for (let c = 1; c < 9; ++c) {
+      const t = (c - 1) / 7;
+      const x = xC + t * (xB + t * xA);
+      const y = yC + t * (yB + t * yA);
+      const m = (2 * yA * t + yB) / (2 * xA * t + xB);
+
+      alt.gain_curve.control_points.push({
+        x: x,
+        y: Math.log2(y / x),
+        m: (x * m - y) / (Math.log(2) * x * y),
+      });
+    }
+  }
 }
 
 let syntaxToMetadata = function(syntax, metadata) {
