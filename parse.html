@@ -37,6 +37,54 @@ class ReadBitStream {
     }
 };
 
+class WriteBitStream {
+  constructor() {
+    this.buffer = [];        // Dynamic storage for completed bytes
+    this.currentByte = 0;    // The byte currently being built
+    this.bitsFilled = 0;     // How many bits of currentByte are used
+  }
+
+  write(x, bits) {
+    if (bits >= 8 && this.bitsFilled !== 0) {
+      throw("Stream not bit aligned");
+    }
+
+    x &= (1 << bits) - 1; 
+    while (bits > 0) {
+      const spaceLeft = 8 - this.bitsFilled;
+      if (bits <= spaceLeft) {
+        this.currentByte |= (x << (spaceLeft - bits));
+        this.bitsFilled += bits;
+        bits = 0; // We are done
+      } else {
+        const bitsToWrite = spaceLeft;
+        const shiftAmount = bits - bitsToWrite;
+        const chunk = (x >>> shiftAmount); 
+        this.currentByte |= chunk;
+        this.buffer.push(this.currentByte);
+        this.currentByte = 0;
+        this.bitsFilled = 0;
+        bits -= bitsToWrite;
+        x &= (1 << bits) - 1; 
+      }
+      if (this.bitsFilled === 8) {
+        this.buffer.push(this.currentByte);
+        this.currentByte = 0;
+        this.bitsFilled = 0;
+      }
+    }
+  }
+
+  output() {
+    if (this.bitsFilled !== 0) {
+      throw("Output not bit aligned");
+    }
+    if (this.bitsFilled === 0) {
+      return new Uint8Array(this.buffer);
+    }
+  }
+}
+
 // Table C.1 — Application #5 syntax structure
 let parseApplicationInfo = function(stream, syntax) {
     syntax.application_version = stream.read(3);
@@ -44,7 +92,12 @@ let parseApplicationInfo = function(stream, syntax) {
     syntax.reserved_zero_c1 = stream.read(2);
     parseColorVolumeTransform(stream, syntax);
 }
-
+let writeApplicationInfo = function(stream, syntax) {
+    stream.write(syntax.application_version, 3);
+    stream.write(syntax.minimum_application_version, 3);
+    stream.write(0, 2);
+    writeColorVolumeTransform(stream, syntax);
+}
 
 // Table C.2 — Color volume transform syntax structure
 let parseColorVolumeTransform = function(stream, syntax) {
@@ -57,6 +110,17 @@ let parseColorVolumeTransform = function(stream, syntax) {
     }
     if (syntax.has_adaptive_tone_map_flag === 1) {
         parseAdaptiveToneMap(stream, syntax);
+    }
+}
+let writeColorVolumeTransform = function(stream, syntax) {
+    stream.write(syntax.has_custom_hdr_reference_white_flag, 1);
+    stream.write(syntax.has_adaptive_tone_map_flag, 1);
+    stream.write(0, 6);
+    if (syntax.has_custom_hdr_reference_white_flag === 1) {
+        stream.write(syntax.hdr_reference_white, 16);
+    }
+    if (syntax.has_adaptive_tone_map_flag === 1) {
+        writeAdaptiveToneMap(stream, syntax);
     }
 }
 
@@ -102,6 +166,34 @@ let parseAdaptiveToneMap = function(stream, syntax) {
         syntax.reserved_zero_c3 = stream.read(7);
     }
 }
+let writeAdaptiveToneMap = function(stream, syntax) {
+    stream.write(syntax.baseline_hdr_headroom, 16);
+    stream.write(syntax.use_reference_white_tone_mapping_flag, 1);
+
+    if (syntax.use_reference_white_tone_mapping_flag === 0) {
+        stream.write(syntax.num_alternate_images, 3);
+        stream.write(syntax.gain_application_space_chromaticities_mode, 2);
+        stream.write(syntax.has_common_component_mix_params_flag, 1);
+        stream.write(syntax.has_common_curve_params_flag, 1);
+        
+        if (syntax.gain_application_space_chromaticities_mode === 3) {
+            for (let r = 0; r < 8; r++) {
+                stream.write(syntax.gain_application_space_chromaticities[r], 16);
+            }
+        }
+
+        if (syntax.num_alternate_images > 0) {
+            const num_alternate_images_loop_limit = Math.min(syntax.num_alternate_images, 4);
+            for (let a = 0; a < num_alternate_images_loop_limit; a++) {
+                stream.write(syntax.alternate_hdr_headrooms[a], 16);
+                writeComponentMixing(stream, syntax, a);
+                writeGainCurve(stream, syntax, a);
+            }
+        }
+    } else {
+        stream.write(0, 7);
+    }
+}
 
 // Table C.4 — Component mixing function structure syntax
 let parseComponentMixing = function(stream, syntax, a) {
@@ -134,6 +226,23 @@ let parseComponentMixing = function(stream, syntax, a) {
     }
   }
 }
+let writeComponentMixing = function(stream, syntax, a) {
+  if (a === 0 || syntax.has_common_component_mix_params_flag === 0) {
+    stream.write(syntax.component_mixing_type[a], 2);
+    if (syntax.component_mixing_type[a] !== 3) {
+      stream.write(syntax.reserved_zero_c4[a], 6);
+    } else {
+      for (let k = 0; k < 6; k++) {
+        stream.write(syntax.has_component_mixing_coefficient_flag[a][k], 1);
+      }
+      for (let k = 0; k < 6; k++) {
+        if (syntax.has_component_mixing_coefficient_flag[a][k] === 1) {
+          stream.write(syntax.component_mixing_coefficients[a][k], 16); 
+        }
+      }
+    }
+  }
+}
 
 // Table C.5 — Gain curve structure syntax
 let parseGainCurve = function(stream, syntax, a) {
@@ -160,6 +269,24 @@ let parseGainCurve = function(stream, syntax, a) {
         syntax.gain_curve_control_points_theta[a] = [];
         for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
             syntax.gain_curve_control_points_theta[a][c] = stream.read(16);
+        }
+    }
+}
+let writeGainCurve = function(stream, syntax, a) {
+    if (a === 0 || syntax.has_common_curve_params_flag === 0) {
+        stream.write(syntax.gain_curve_num_control_points_minus_1[a], 5);
+        stream.write(syntax.gain_curve_use_pchip_slope_flag[a], 1);
+        stream.write(syntax.reserved_zero_c5[a], 2);
+        for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+            stream.write(syntax.gain_curve_control_points_x[a][c], 16);
+        }
+    }
+    for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+        stream.write(syntax.gain_curve_control_points_y[a][c], 16);
+    }
+    if (syntax.gain_curve_use_pchip_slope_flag[a] === 0) {
+        for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
+            stream.write(syntax.gain_curve_control_points_theta[a][c], 16);
         }
     }
 }
@@ -213,6 +340,9 @@ function compactJson(data, indent = 2) {
     }
 
     // Primitives (strings, numbers, booleans, null)
+    if (typeof(curr) == 'number') {
+      return JSON.stringify(Number(Number(curr).toFixed(8)));
+    }
     return JSON.stringify(curr);
   }
 
@@ -355,7 +485,7 @@ let syntaxToMetadata = function(syntax, metadata) {
   if (syntax.has_custom_hdr_reference_white_flag === 1) {
     metadata.hdr_reference_white = uint16_to_float(syntax.hdr_reference_white, 1, 50000, 0, 5.0);
   } else {
-    metadata.hdr_reference_white = 1000.0;
+    metadata.hdr_reference_white = 203.0;
   }
 
   if (syntax.has_adaptive_tone_map_flag === 1) {
@@ -415,13 +545,16 @@ let syntaxToMetadata = function(syntax, metadata) {
               min: 0, component: 0,
             };
           } else if (syntax.component_mixing_type[a] === 3) {
+            let p = syntax.component_mixing_coefficients[a].map(
+                x => uint16_to_float(x, 0, 50000, 0, 50000.0));
+            let p_sum = p.reduce((a,b) => a + b, 0);
             alt.color_gain_function.component_mixing = {
-              red: uint16_to_float(syntax.component_mixing_coefficients[a][0], 0, 50000, 0, 50000.0),
-              green: uint16_to_float(syntax.component_mixing_coefficients[a][1], 0, 50000, 0, 50000.0),
-              blue: uint16_to_float(syntax.component_mixing_coefficients[a][2], 0, 50000, 0, 50000.0),
-              max: uint16_to_float(syntax.component_mixing_coefficients[a][3], 0, 50000, 0, 50000.0),
-              min: uint16_to_float(syntax.component_mixing_coefficients[a][4], 0, 50000, 0, 50000.0),
-              component: uint16_to_float(syntax.component_mixing_coefficients[a][5], 0, 50000, 0, 50000.0),
+              red:       p[0] / p_sum,
+              green:     p[1] / p_sum,
+              blue:      p[2] / p_sum,
+              max:       p[3] / p_sum,
+              min:       p[4] / p_sum,
+              component: p[5] / p_sum,
             };
           }
 
@@ -464,63 +597,82 @@ let resizeAll = function() {
   Semantics.rows = Semantics.value.split('\n').length;
 }
 
-let onBinaryChanged = function() {
-  Binary.style.backgroundColor = kEditingColor;
+let onParse = function() {
   Syntax.value = 'error';
   Syntax.style.backgroundColor = kErrorColor;
-  Semantics.value = 'error';
-  Semantics.style.backgroundColor = kErrorColor;
-
   try {
-    // Parse the syntax
     const list = Binary.value.split(',').map(item => Number(item.trim()));
     const buffer = new Uint8Array(list);
     let syntax = {};
-    let metadata = {};
- 
  
     parseApplicationInfo(new ReadBitStream(buffer), syntax);
     Syntax.style.backgroundColor = kPassColor;
     Syntax.value = compactJson(syntax);
- 
-    Semantics.style.backgroundColor = kPassColor;
-    syntaxToMetadata(syntax, metadata);
-    Semantics.value = compactJson(metadata);
     resizeAll();
   } catch (e) {
     throw(e);
   }
 };
 
-let onSyntaxChanged = function() {
+let onSerialize = function() {
+  Binary.value = '';
+  Binary.style.backgroundColor = kErrorColor;
   try {
-    Binary.style.backgroundColor = kErrorColor;
-    Syntax.style.backgroundColor = kErrorColor;
-    Semantics.style.backgroundColor = kErrorColor;
-
-    Binary.value = "serialization not implemented";
-    Semantics.value = "error";
- 
+    let stream = new WriteBitStream();
     let syntax = JSON.parse(Syntax.value);
-    Syntax.style.backgroundColor = kEditingColor;
+    writeApplicationInfo(stream, syntax);
 
-    let metadata = {};
-    syntaxToMetadata(syntax, metadata);
-    Semantics.value = compactJson(metadata);
-    Semantics.style.backgroundColor = kPassColor;
+    let output = stream.output();
+    for (let i = 0; i < output.length; ++i) {
+      Binary.value += '0x' + Number(output[i]).toString(16).padStart(2, '0') + ', ';
+      if ((i + 1) % 8 === 0) {
+        Binary.value += '\n';
+      }
+    }
+    Binary.style.backgroundColor = kPassColor;
     resizeAll();
   } catch (e) {
     throw(e);
   }
 }
 
+let onToJson = function() {
+  Semantics.value = 'error';
+  Semantics.style.backgroundColor = kErrorColor;
+  try {
+    let syntax = JSON.parse(Syntax.value);
+    let metadata = {}
+    syntaxToMetadata(syntax, metadata);
+    Semantics.style.backgroundColor = kPassColor;
+    Semantics.value = compactJson(metadata);
+    resizeAll();
+  } catch (e) {
+    throw(e);
+  }
+}
+
+let onBinaryChanged = function() {
+  Binary.style.backgroundColor = kEditingColor;
+  Syntax.style.backgroundColor = kOutdatedColor;
+  Semantics.style.backgroundColor = kOutdatedColor;
+  resizeAll();
+}
+
+let onSyntaxChanged = function() {
+  Binary.style.backgroundColor = kOutdatedColor;
+  Syntax.style.backgroundColor = kEditingColor;
+  Semantics.style.backgroundColor = kOutdatedColor;
+  resizeAll();
+}
+
 let main = function() {
-  onBinaryChanged();
+  resizeAll();
 }
 
 </script>
 </head>
 <body onload="main();">
+
 <h2>Binary</h2>
 <p>Comma separated list of hex values, as of the form output by <code>xxd -i</code>.</p>
 <p>
@@ -536,9 +688,23 @@ let main = function() {
   0x11, 0x61, 0xa6,"
 </textarea>
 </p>
+<p>
+  <button id="Parse" onclick="onParse();">Parse</button>
+</p>
 </input>
+
 <h2>Syntax:</h2>
+<p>
+  <button id="Serialize" onclick="onSerialize();">Serialize</button>
+</p>
 <textarea id="Syntax" oninput = "onSyntaxChanged();"></textarea>
+<p>
+  <button id="ToJson" onclick="onToJson();">To JSON</button>
+</p>
+
 <h2>Semantics (JSON representation of Color Volume Transform):</h2>
+<p>
+  <button id="FromJson" onclick="onFromJson();" disabled>From JSON</button>
+</p>
 <textarea id="Semantics"></textarea>
 </body>
