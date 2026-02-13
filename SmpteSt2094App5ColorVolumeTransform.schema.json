@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ccameron-chromium.github.io/agtm-demo/SmpteSt2094App5ColorVolumeTransform.schema.json",
+  "title": "SmpteSt2094App5ColorVolumeTransform",
+  "description": "JSON Schema representing SMPTE ST 2094-50 Color Volume Transform.",
+  "type": "object",
+  "properties": {
+    "hdrReferenceWhite": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 10000
+    },
+    "headroomAdaptiveToneMap": {
+      "$ref": "#/$defs/SmpteSt2094App5HeadroomAdaptiveToneMap"
+    }
+  },
+  "required": [
+    "hdrReferenceWhite"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "SmpteSt2094App5HeadroomAdaptiveToneMap": {
+      "type": "object",
+      "properties": {
+        "baselineHdrHeadroom": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 6 
+        },
+        "gainApplicationChromaticities": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 8,
+          "maxItems": 8
+        },
+        "alternateImages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SmpteSt2094App5HeadroomAlternateImage"
+          }
+        }
+      },
+      "required": [
+        "baselineHdrHeadroom",
+        "gainApplicationChromaticities",
+        "alternateImages"
+      ],
+      "additionalProperties": false
+    },
+    "SmpteSt2094App5HeadroomAlternateImage": {
+      "type": "object",
+      "properties": {
+        "hdrHeadroom": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 6 
+        },
+        "colorGainFunction": {
+          "$ref": "#/$defs/SmpteSt2094App5HeadroomColorGainFunction"
+        }
+      },
+      "required": [
+        "hdrHeadroom",
+        "colorGainFunction"
+      ],
+      "additionalProperties": false
+    },
+    "SmpteSt2094App5HeadroomColorGainFunction": {
+      "type": "object",
+      "properties": {
+        "componentMix": {
+          "$ref": "#/$defs/SmpteSt2094App5HeadroomComponentMixingFunction"
+        },
+        "gainCurve": {
+          "$ref": "#/$defs/SmpteSt2094App5HeadroomGainCurve"
+        }
+      },
+      "required": [
+        "componentMix",
+        "gainCurve"
+      ],
+      "additionalProperties": false
+    },
+    "SmpteSt2094App5HeadroomComponentMixingFunction": {
+      "type": "object",
+      "properties": {
+        "red": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1 
+        },
+        "green": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1 
+        },
+        "blue": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1 
+        },
+        "max": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1 
+        },
+        "min": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1 
+        },
+        "component": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1 
+        }
+      },
+      "additionalProperties": false
+    },
+    "SmpteSt2094App5HeadroomGainCurve": {
+      "type": "object",
+      "properties": {
+        "controlPoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SmpteSt2094App5HeadroomGainCurveControlPoint"
+          },
+          "minItems": 1,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "controlPoints"
+      ],
+      "additionalProperties": false
+    },
+    "SmpteSt2094App5HeadroomGainCurveControlPoint": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 64 
+        },
+        "y": {
+          "type": "number",
+          "minimum": -6,
+          "maximum": 6 
+        },
+        "m": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100 
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "m"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
