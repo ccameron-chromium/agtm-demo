@@ -17,8 +17,14 @@ export const syntaxToColorVolumeTransform = function(syntax) {
   return semanticsColorVolumeTransform(syntax);
 }
 
-export const binaryToColorVolumeTransform = function(syntax) {
-  return semanticsColorVolumeTransform(syntax);
+export const colorVolumeTransformToSyntax = function(cvt) {
+  let syntax = {}
+  syntaxColorVolumeTransform(cvt, syntax);
+  return syntax;
+}
+
+export const binaryToColorVolumeTransform = function(binary) {
+  return semanticsColorVolumeTransform(binaryToSyntax(binary));
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -28,6 +34,10 @@ let uint16_to_float = function(v, clamp_min, clamp_max, offset, scale) {
   if (v < clamp_min) v = clamp_min;
   if (v > clamp_max) v = clamp_max;
   return (v - offset) / scale;
+}
+
+let float_to_uint16 = function(f, clamp_min, clamp_max, offset, scale) {
+  return Math.round(f * scale + offset);
 }
 
 // Class to read a Uint8Array, bit-by-bit.
@@ -317,6 +327,91 @@ let writeGainCurve = function(stream, syntax, a) {
 ////////////////////////////////////////////////////////////////////////
 // Semantics
 
+// Clause C.3.3: Color volume transform semantics
+let semanticsColorVolumeTransform = function(syntax) {
+  let cvt = {};
+  if (syntax.has_custom_hdr_reference_white_flag === 1) {
+    cvt.hdrReferenceWhite = uint16_to_float(syntax.hdr_reference_white, 1, 50000, 0, 5.0);
+  } else {
+    cvt.hdrReferenceWhite = 203.0;
+  }
+  if (syntax.has_adaptive_tone_map_flag === 1) {
+    cvt.headroomAdaptiveToneMap = semanticsHeadroomAdaptiveToneMap(syntax);
+  }
+  return cvt;
+}
+let syntaxGainApplicationChromaticities = function(gainApplicationChromaticities) {
+  return gainApplicationChromaticities.map(
+    x => float_to_uint16(x, 0, 50000, 0, 50000.0));
+}
+
+let syntaxAlternateImage = function(hatm, a, syntax) {
+  let alt = hatm.alternateImages[a];
+  syntax.alternate_hdr_headrooms[a] = float_to_uint16(alt.hdrHeadroom, 0, 60000, 0, 10000.0);
+  syntax.component_mixing_type[a] = 3;
+
+  let cm = alt.colorGainFunction.componentMix;
+  syntax.component_mixing_coefficients[a] = [
+      cm.red, cm.green, cm.blue, cm.max, cm.min, cm.component].map(x => float_to_uint16(x, 0, 50000, 0, 50000));
+  syntax.has_component_mixing_coefficient_flag[a] = 
+      syntax.component_mixing_coefficients[a].map(x => x === 0 ? 0 : 1);
+
+  const y_sign = syntax.baseline_hdr_headroom < syntax.alternate_hdr_headrooms[a] ?
+               1.0 : -1.0;
+  let cp = alt.colorGainFunction.gainCurve.controlPoints;
+  syntax.gain_curve_num_control_points_minus_1[a] = cp.length - 1;
+  syntax.gain_curve_use_pchip_slope_flag[a] = 0;
+  syntax.gain_curve_control_points_x[a] = cp.map(xym =>
+      float_to_uint16(xym.x, 0, 64000, 0, 1000.0));
+  syntax.gain_curve_control_points_y[a] = cp.map(xym =>
+      float_to_uint16(y_sign * xym.y, 0, 60000, 0, 10000.0));
+  syntax.gain_curve_control_points_theta[a] = cp.map(xym =>
+      float_to_uint16(Math.atan(xym.m), 1, 35999, 18000, 36000.0 / Math.PI));
+  
+}
+
+let syntaxHeadroomAdaptiveToneMap = function(hatm, syntax) {
+  syntax.baseline_hdr_headroom = float_to_uint16(hatm.baselineHdrHeadroom, 0, 60000, 0, 10000.0);
+  syntax.use_reference_white_tone_mapping_flag = 0;
+
+  syntax.gain_application_space_chromaticities_mode = 3;
+  syntax.gain_application_space_chromaticities = syntaxGainApplicationChromaticities(
+      hatm.gainApplicationChromaticities);
+  syntax.num_alternate_images = hatm.alternateImages.length;
+  if (syntax.num_alternate_images > 0) {
+    syntax.alternate_hdr_headrooms = [];
+    syntax.component_mixing_type = [];
+    syntax.has_component_mixing_coefficient_flag = [];
+    syntax.component_mixing_coefficients = [];
+    syntax.gain_curve_num_control_points_minus_1 = [];
+    syntax.gain_curve_use_pchip_slope_flag = [];
+    syntax.gain_curve_control_points_x = [];
+    syntax.gain_curve_control_points_y = [];
+    syntax.gain_curve_control_points_theta = [];
+    for (let a = 0; a < syntax.num_alternate_images; ++a) {
+      syntaxAlternateImage(hatm, a, syntax);
+    }
+  }
+}
+
+let syntaxColorVolumeTransform = function(cvt, syntax) {
+  syntax.application_version = 0;
+  syntax.minimum_application_version = 0;
+  if (cvt.hdrReferenceWhite === 203) {
+    syntax.has_custom_hdr_reference_white_flag = 0;
+  } else {
+    syntax.has_custom_hdr_reference_white_flag = 1;
+    syntax.hdr_reference_white = float_to_uint16(cvt.hdrReferenceWhite, 1, 50000, 0, 5.0);
+  }
+
+  if (cvt.headroomAdaptiveToneMap) {
+    syntax.has_adaptive_tone_map_flag = 1;
+    syntaxHeadroomAdaptiveToneMap(cvt.headroomAdaptiveToneMap, syntax);
+  } else {
+    syntax.has_adaptive_tone_map_flag = 0;
+  }
+}
+
 // Clause C.3.5: Gain application color space chromaticity semantics
 let semanticsGainApplicationChromaticities = function(syntax) {
   if (syntax.gain_application_space_chromaticities_mode === 0) {
@@ -326,12 +421,8 @@ let semanticsGainApplicationChromaticities = function(syntax) {
   } else if (syntax.gain_application_space_chromaticities_mode === 2) {
     return getRec2020Primaries();
   } else if (syntax.gain_application_space_chromaticities_mode === 3) {
-    let gainApplicationChromaticities = [];
-    for (let r = 0; r < 8; ++r) {
-      gainApplicationChromaticities[r] = 
-          uint16_to_float(syntax.gain_application_space_chromaticities[r], 0, 50000, 0, 50000.0);
-    }
-    return gainApplicationChromaticities;
+    return syntax.gain_application_space_chromaticities.map(
+        x => uint16_to_float(x, 0, 50000, 0, 50000.0));
   }
 }
 
@@ -409,20 +500,6 @@ let semanticsHeadroomAdaptiveToneMap = function(syntax) {
     populateWithRWTMO(hatm);
   }
   return hatm;
-}
-
-// Clause C.3.3: Color volume transform semantics
-let semanticsColorVolumeTransform = function(syntax) {
-  let cvt = {};
-  if (syntax.has_custom_hdr_reference_white_flag === 1) {
-    cvt.hdrReferenceWhite = uint16_to_float(syntax.hdr_reference_white, 1, 50000, 0, 5.0);
-  } else {
-    cvt.hdrReferenceWhite = 203.0;
-  }
-  if (syntax.has_adaptive_tone_map_flag === 1) {
-    cvt.headroomAdaptiveToneMap = semanticsHeadroomAdaptiveToneMap(syntax);
-  }
-  return cvt;
 }
 
 // Clause C.3.8: Reference white adaptive tone mapping computation

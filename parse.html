@@ -134,6 +134,20 @@ let onToJson = function() {
   }
 }
 
+let onFromJson = function() {
+  Syntax.value = 'error';
+  Syntax.style.backgroundColor = kErrorColor;
+  try {
+    let metadata = JSON.parse(Semantics.value);
+    let syntax = SmpteSt2094App5.colorVolumeTransformToSyntax(metadata);
+    Syntax.style.backgroundColor = kPassColor;
+    Syntax.value = compactJson(syntax);
+    resizeAll();
+  } catch (e) {
+    throw(e);
+  }
+}
+
 let onBinaryChanged = function() {
   Binary.style.backgroundColor = kEditingColor;
   Syntax.style.backgroundColor = kOutdatedColor;
@@ -187,7 +201,7 @@ let main = function() {
 
 <h2>Semantics (JSON representation of Color Volume Transform):</h2>
 <p>
-  <button id="FromJson" onclick="onFromJson();" disabled>From JSON</button>
+  <button id="FromJson" onclick="onFromJson();">From JSON</button>
 </p>
 <textarea id="Semantics"></textarea>
 </body>
