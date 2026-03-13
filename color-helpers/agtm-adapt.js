@@ -1,6 +1,68 @@
-let AgtmAdapt = function(metadata, headroom) {
+let AgtmAdapt = function(metadata, H_target) {
+  // Create the list of HDR headrooms including the baseline image and all alternate images, as
+  // described Clause 6.2.5 Computation of the headroom-adaptive tone map.
+
+  // Let N be the length of the combined list.
+  let N = 0;
+
+  // Let H be the sorted list of HDR headrooms. Let indices list the alternate
+  // image index of each entry of H. The index for the baseline image is
+  // kInvalidIndex.
+  let H = [];
+  let indices = [];
+  const kInvalidIndex = -1;
+
+  for (let i = 0; i < metadata.altr.length; ++i) {
+    if (N == i && metadata.baseline_hdr_headroom < metadata.altr[i].headroom) {
+        // Insert the baseline HDR headroom before the indices as they are visited.
+        indices[N] = kInvalidIndex;
+        H[N++] = metadata.baseline_hdr_headroom;
+    }
+    indices[N] = i;
+    H[N] = metadata.altr[i].headroom;
+    N += 1;
+  }
+  if (N == metadata.altr.length) {
+      // Insert the baseline HDR headroom at the end if it has not yet been inserted.
+      indices[N] = kInvalidIndex;
+      H[N++] = metadata.baseline_hdr_headroom;
+  }
+
+  // Find the indices for the contributing images.
+  let result = null;
+  if (H_target <= H[0]) {
+      // One case of Formula (2), for the left endpoint.
+      result = [{index:indices[0], weight:1}];
+  } else if (H_target >= H[N-1]) {
+      // The other case of Formula (2), for the right endpoint.
+      result = [{index:indices[N-1], weight:1}];
+  } else {
+      // The case of Formula (3).
+      for (let i = 0; i < N - 1; ++i) {
+          if (H[i] <= H_target && H_target <= H[i+1]) {
+              result = [
+                  {
+                      index:indices[i],
+                      weight:(H[i+1] - H_target) / (H[i+1] - H[i])
+                  },
+                  {
+                      index:indices[i+1],
+                      weight:(H_target - H[i]) / (H[i+1] - H[i])
+                  }
+              ];
+              break;
+          }
+      }
+  }
+
+  // Remove entries with weight 0, and remove entries for the baseline image.
+  result = result.filter(item => item.index !== kInvalidIndex);
+  result = result.filter(item => item.weight !== 0);
+  return result;
+
+  
   let altr_min = 0;
-  let altr_max = metadata.altr.length - 1;
+  let altr_max = metadata.altr.length;
 
   while (altr_max - altr_min > 1) {
     let altr_mid = Math.round((altr_min + altr_max) / 2);

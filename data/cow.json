@@ -4,7 +4,7 @@
   "hdr_reference_white":203,
   "gain_application_space_primaries":9,
   "gain_offset":0,
-  "baseline_hdr_headoom":2.300448,
+  "baseline_hdr_headroom":2.300448,
   "baseline_max_component":4.926108,
   "altr":[
     {
@@ -29,13 +29,6 @@
         {"x":2.500000, "y":-0.511605, "m":-0.327784},
         {"x":4.000000, "y":-0.927928, "m":-0.236731},
         {"x":4.926108, "y":-1.130523, "m":-0.202773}
-      ]
-    },
-    {
-      "headroom":2.300448,
-      "mix": { "rgb": [ 0, 0, 0 ], "max": 0, "min": 0, "channel": 1 },
-      "curve":[
-        {"x":16.000000, "y":0.000000, "m":0.000000}
       ]
     }
   ],
