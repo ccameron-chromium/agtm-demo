@@ -5,7 +5,7 @@
     "baselineHdrHeadroom":2.300448,
     "alternateImages":[
       {
-        "headroom":0.000000,
+        "hdrHeadroom":0.000000,
         "componentMix": { "red": 0, "green":0, "blue":0, "max": 1, "min": 0, "component": 0 },
         "gainCurve":{
           "controlPoints":[
