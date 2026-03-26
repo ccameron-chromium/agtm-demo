@@ -263,7 +263,7 @@ let writeComponentMixing = function(stream, syntax, a) {
   if (a === 0 || syntax.has_common_component_mix_params_flag === 0) {
     stream.write(syntax.component_mixing_type[a], 2);
     if (syntax.component_mixing_type[a] !== 3) {
-      stream.write(syntax.reserved_zero_c4[a], 6);
+      stream.write(0 /* syntax.reserved_zero_c4[a] */, 6);
     } else {
       for (let k = 0; k < 6; k++) {
         stream.write(syntax.has_component_mixing_coefficient_flag[a][k], 1);
@@ -309,7 +309,7 @@ let writeGainCurve = function(stream, syntax, a) {
     if (a === 0 || syntax.has_common_curve_params_flag === 0) {
         stream.write(syntax.gain_curve_num_control_points_minus_1[a], 5);
         stream.write(syntax.gain_curve_use_pchip_slope_flag[a], 1);
-        stream.write(syntax.reserved_zero_c5[a], 2);
+        stream.write(0 /* syntax.reserved_zero_c5[a] */, 2);
         for (let c = 0; c < syntax.gain_curve_num_control_points_minus_1[a] + 1; c++) {
             stream.write(syntax.gain_curve_control_points_x[a][c], 16);
         }
@@ -348,13 +348,29 @@ let syntaxGainApplicationChromaticities = function(gainApplicationChromaticities
 let syntaxAlternateImage = function(hatm, a, syntax) {
   let alt = hatm.alternateImages[a];
   syntax.alternate_hdr_headrooms[a] = float_to_uint16(alt.hdrHeadroom, 0, 60000, 0, 10000.0);
-  syntax.component_mixing_type[a] = 3;
 
   let cm = alt.colorGainFunction.componentMix;
-  syntax.component_mixing_coefficients[a] = [
+  let cm_coefficients = [
       cm.red, cm.green, cm.blue, cm.max, cm.min, cm.component].map(x => float_to_uint16(x, 0, 50000, 0, 50000));
-  syntax.has_component_mixing_coefficient_flag[a] = 
-      syntax.component_mixing_coefficients[a].map(x => x === 0 ? 0 : 1);
+
+  syntax.component_mixing_coefficients[a] = null;
+  syntax.has_component_mixing_coefficient_flag[a] = null;
+
+  if (JSON.stringify(cm_coefficients) ===
+      JSON.stringify([0, 0, 0, 50000, 0, 0])) {
+    syntax.component_mixing_type[a] = 0;
+  } else if (JSON.stringify(cm_coefficients) ===
+             JSON.stringify([0, 0, 0, 0, 0, 50000])) {
+    syntax.component_mixing_type[a] = 1;
+  } else if (JSON.stringify(cm_coefficients) ===
+             JSON.stringify([8333, 8333, 8333, 25000, 0, 0])) {
+    syntax.component_mixing_type[a] = 2;
+  } else {
+    syntax.component_mixing_type[a] = 3;
+    syntax.component_mixing_coefficients[a] = cm_coefficients;
+    syntax.has_component_mixing_coefficient_flag[a] = 
+        syntax.component_mixing_coefficients[a].map(x => x === 0 ? 0 : 1);
+  }
 
   const y_sign = syntax.baseline_hdr_headroom < syntax.alternate_hdr_headrooms[a] ?
                1.0 : -1.0;
@@ -367,17 +383,38 @@ let syntaxAlternateImage = function(hatm, a, syntax) {
       float_to_uint16(y_sign * xym.y, 0, 60000, 0, 10000.0));
   syntax.gain_curve_control_points_theta[a] = cp.map(xym =>
       float_to_uint16(Math.atan(xym.m), 1, 35999, 18000, 36000.0 / Math.PI));
-  
+
+  syntax.reserved_zero_c4[a] = 0;
+  syntax.reserved_zero_c5[a] = 0;
 }
 
 let syntaxHeadroomAdaptiveToneMap = function(hatm, syntax) {
   syntax.baseline_hdr_headroom = float_to_uint16(hatm.baselineHdrHeadroom, 0, 60000, 0, 10000.0);
   syntax.use_reference_white_tone_mapping_flag = 0;
-
-  syntax.gain_application_space_chromaticities_mode = 3;
-  syntax.gain_application_space_chromaticities = syntaxGainApplicationChromaticities(
-      hatm.gainApplicationChromaticities);
   syntax.num_alternate_images = hatm.alternateImages.length;
+
+  let chromaticities = syntaxGainApplicationChromaticities(
+      hatm.gainApplicationChromaticities);
+  
+  if (JSON.stringify(chromaticities) ===
+      JSON.stringify([32000, 16500, 15000, 30000, 7500, 3000, 15635, 16450])) {
+    syntax.gain_application_space_chromaticities_mode = 0;
+  } else if (JSON.stringify(chromaticities) ===
+      JSON.stringify([34000, 16000, 13250, 34500, 7500, 3000, 15635, 16450])) {
+    syntax.gain_application_space_chromaticities_mode = 1;
+  } else if (JSON.stringify(chromaticities) ===
+      JSON.stringify([35400, 14600, 8500, 39850, 6550, 2300, 15635, 16450])) {
+    syntax.gain_application_space_chromaticities_mode = 2;
+  } else {
+    syntax.gain_application_space_chromaticities_mode = 3;
+  }
+  syntax.has_common_component_mix_params_flag = 0;
+  syntax.has_common_curve_params_flag = 0;
+
+  if (syntax.gain_application_space_chromaticities_mode === 3) {
+    syntax.gain_application_space_chromaticities = chromaticities;
+  }
+
   if (syntax.num_alternate_images > 0) {
     syntax.alternate_hdr_headrooms = [];
     syntax.component_mixing_type = [];
@@ -388,6 +425,8 @@ let syntaxHeadroomAdaptiveToneMap = function(hatm, syntax) {
     syntax.gain_curve_control_points_x = [];
     syntax.gain_curve_control_points_y = [];
     syntax.gain_curve_control_points_theta = [];
+    syntax.reserved_zero_c4 = [];
+    syntax.reserved_zero_c5 = [];
     for (let a = 0; a < syntax.num_alternate_images; ++a) {
       syntaxAlternateImage(hatm, a, syntax);
     }
@@ -397,18 +436,16 @@ let syntaxHeadroomAdaptiveToneMap = function(hatm, syntax) {
 let syntaxColorVolumeTransform = function(cvt, syntax) {
   syntax.application_version = 0;
   syntax.minimum_application_version = 0;
-  if (cvt.hdrReferenceWhite === 203) {
-    syntax.has_custom_hdr_reference_white_flag = 0;
-  } else {
-    syntax.has_custom_hdr_reference_white_flag = 1;
+  syntax.reserved_zero_c1 = 0
+  syntax.has_custom_hdr_reference_white_flag = (cvt.hdrReferenceWhite === 203) ? 0 : 1;
+  syntax.has_adaptive_tone_map_flag = (cvt.headroomAdaptiveToneMap) ? 1 : 0;
+  syntax.reserved_zero_c2 = 0
+
+  if (syntax.has_custom_hdr_reference_white_flag) {
     syntax.hdr_reference_white = float_to_uint16(cvt.hdrReferenceWhite, 1, 50000, 0, 5.0);
   }
-
-  if (cvt.headroomAdaptiveToneMap) {
-    syntax.has_adaptive_tone_map_flag = 1;
+  if (syntax.has_adaptive_tone_map_flag) {
     syntaxHeadroomAdaptiveToneMap(cvt.headroomAdaptiveToneMap, syntax);
-  } else {
-    syntax.has_adaptive_tone_map_flag = 0;
   }
 }
 
