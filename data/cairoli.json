@@ -1,11 +1,7 @@
 {
-  "primaries": 9,
-  "transfer": 16,
-  "hdr_reference_white": 320,
+  "hdrReferenceWhite": 320,
   "gain_application_space_primaries": 9,
-  "gain_offset": 0,
   "baseline_hdr_headroom": 2.300448,
-  "baseline_max_component": 4.926108,
   "altr": [
     {
       "headroom": 0,
@@ -37,10 +33,5 @@
         }
       ]
     }
-  ],
-  "white_surround_transform": {
-    "x1": 0.1,
-    "y1": 0.1,
-    "x2": 0.9
-  }
+  ]
 }

@@ -1,4 +1,4 @@
-let AgtmAdapt = function(metadata, H_target) {
+let AgtmAdapt = function(headroomAdaptiveToneMap, H_target) {
   // Create the list of HDR headrooms including the baseline image and all alternate images, as
   // described Clause 6.2.5 Computation of the headroom-adaptive tone map.
 
@@ -12,20 +12,22 @@ let AgtmAdapt = function(metadata, H_target) {
   let indices = [];
   const kInvalidIndex = -1;
 
-  for (let i = 0; i < metadata.altr.length; ++i) {
-    if (N == i && metadata.baseline_hdr_headroom < metadata.altr[i].headroom) {
+  const H_baseline = headroomAdaptiveToneMap.baselineHdrHeadroom;
+  const altr = headroomAdaptiveToneMap.altr;
+  for (let i = 0; i < altr.length; ++i) {
+    if (N == i && H_baseline < altr[i].headroom) {
         // Insert the baseline HDR headroom before the indices as they are visited.
         indices[N] = kInvalidIndex;
-        H[N++] = metadata.baseline_hdr_headroom;
+        H[N++] = H_baseline;
     }
     indices[N] = i;
-    H[N] = metadata.altr[i].headroom;
+    H[N] = altr[i].headroom;
     N += 1;
   }
-  if (N == metadata.altr.length) {
+  if (N == altr.length) {
       // Insert the baseline HDR headroom at the end if it has not yet been inserted.
       indices[N] = kInvalidIndex;
-      H[N++] = metadata.baseline_hdr_headroom;
+      H[N++] = H_baseline;
   }
 
   // Find the indices for the contributing images.
@@ -62,22 +64,22 @@ let AgtmAdapt = function(metadata, H_target) {
 
   
   let altr_min = 0;
-  let altr_max = metadata.altr.length;
+  let altr_max = headroomAdaptiveToneMap.altr.length;
 
   while (altr_max - altr_min > 1) {
     let altr_mid = Math.round((altr_min + altr_max) / 2);
-    if (headroom <= metadata.altr[altr_mid].headroom) {
+    if (headroom <= headroomAdaptiveToneMap.altr[altr_mid].headroom) {
       altr_max = altr_mid;
     }
-    if (headroom >= metadata.altr[altr_mid].headroom) {
+    if (headroom >= headroomAdaptiveToneMap.altr[altr_mid].headroom) {
       altr_min = altr_mid;
     }
   }
 
   let w_min = 1.0;
   let w_max = 0.0;
-  let h_min = metadata.altr[altr_min].headroom;
-  let h_max = metadata.altr[altr_max].headroom;
+  let h_min = headroomAdaptiveToneMap.altr[altr_min].headroom;
+  let h_max = headroomAdaptiveToneMap.altr[altr_max].headroom;
   if (h_max > h_min) {
     w_max = clamp((headroom - h_min) / (h_max - h_min), 0.0, 1.0);
     w_min = 1.0 - w_max;

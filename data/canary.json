@@ -1,5 +1,5 @@
 {
-  "hdr_reference_white": 100,
+  "hdrReferenceWhite": 100,
   "baseline_hdr_headroom": 2.300448,
   "baseline_max_component": 4.926108,
   "gain_application_space_primaries": 9,

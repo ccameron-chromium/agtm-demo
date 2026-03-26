@@ -27,7 +27,7 @@ let getPercentile = function(p, bins) {
 }
 
 let linearToExtended = function(linear, metadata) {
-  return linear / metadata.hdr_reference_white;
+  return linear / metadata.hdrReferenceWhite;
 }
 
 let getWstFunction = function(metadata) {
@@ -126,7 +126,7 @@ class ImageStats {
         }
         if (contentTransfer == kTransferPQ) {
           for (let c = 0; c < 3; ++c) {
-            rgb[c] *= 10000 / metadata.hdr_reference_white;
+            rgb[c] *= 10000 / metadata.hdrReferenceWhite;
           }
         }
         if (contentTransfer == kTransferHLG) {
@@ -135,7 +135,7 @@ class ImageStats {
                   0.0593 * rgb[2];
           let Y_to_point2 = Math.pow(Y, 0.2);
           for (let c = 0; c < 3; ++c) {
-            rgb[c] *= Y_to_point2 * 1000 / metadata.hdr_reference_white;
+            rgb[c] *= Y_to_point2 * 1000 / metadata.hdrReferenceWhite;
           }
         }
         for (let c = 0; c < 3; ++c) {
@@ -307,7 +307,7 @@ class CurveEditor {
       }
     }
     this.metadata = structuredClone(metadata);
-    this.curve = new PiecewiseCubic(metadata.altr[this.altr_index].curve);
+    this.curve = new PiecewiseCubic(metadata.headroomAdaptiveToneMap.altr[this.altr_index].curve);
     this.draw();
   }
 
@@ -418,13 +418,13 @@ class CurveEditor {
 
     {
       let p = this.linearToView({x:1, y:0});
-      let text = this.metadata.hdr_reference_white + ' nits';
+      let text = this.metadata.hdrReferenceWhite + ' nits';
       let wst = getWstFunction(metadata);
 
       this.context.fillText(text, p.x - 20, p.y + 40);
       if (p.x > this.canvas.width / 2) {
         let drawNits = function(tt, nits) {
-          let x = nits / tt.metadata.hdr_reference_white;
+          let x = nits / tt.metadata.hdrReferenceWhite;
           x = wst.evaluate(x);
           let p = tt.linearToView({x:x, y:0});
           text = nits + ' nits';
@@ -532,7 +532,7 @@ class CurveEditor {
 
     console.log(adaptation);
     let curves = adaptation.map((item, _) => 
-      {return new PiecewiseCubic(metadata.altr[item.index].curve)});
+      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.altr[item.index].curve)});
     console.log(curves);
 
     // Draw control points only if a single curve was requested.
@@ -596,7 +596,7 @@ class CurveEditor {
 
   }
   drawInterpolatedCurve(headroom, color) {
-    let adaptation = AgtmAdapt(this.metadata, headroom);
+    let adaptation = AgtmAdapt(this.metadata.headroomAdaptiveToneMap, headroom);
     this.drawCurve(adaptation, headroom, color);
   }
   draw() {
@@ -606,7 +606,7 @@ class CurveEditor {
     this.drawHistogram();
     this.drawIdentity();
     if (this.metadata) {
-      for (let i = 0; i < this.metadata.altr.length; ++i) {
+      for (let i = 0; i < this.metadata.headroomAdaptiveToneMap.altr.length; ++i) {
         this.drawCurve([{index:i, weight:1}], null, i == this.altr_index ? '#FF0000' : '#808080');
       }
       if (this.preview_headroom != null) {
@@ -618,7 +618,7 @@ class CurveEditor {
   //////////////////////////////////////////////////////////////////////////////
   // Event handling
   onModelChanged() {
-    this.metadata.altr[this.altr_index].curve = this.curve.getControlPoints();
+    this.metadata.headroomAdaptiveToneMap.altr[this.altr_index].curve = this.curve.getControlPoints();
     this.model_changed_callback(this.metadata);
   }
 
@@ -748,7 +748,7 @@ const fs = `#version 300 es
   uniform float target_log2_headroom;
   uniform float linear_scale;
 
-  uniform float hdr_reference_white;
+  uniform float hdrReferenceWhite;
 
   ` + kColorFunctionGLSL + `
   ` + kAgtmToneMapperGLSL + `
@@ -803,10 +803,10 @@ const fs = `#version 300 es
     rgb = ApplyOotf(rgb, texture_primaries, texture_trfn);
 
     if (texture_trfn == kTransferHLG) {
-      rgb *= 1000.0 / hdr_reference_white;
+      rgb *= 1000.0 / hdrReferenceWhite;
     }
     if (texture_trfn == kTransferPQ) {
-      rgb *= 10000.0 / hdr_reference_white;
+      rgb *= 10000.0 / hdrReferenceWhite;
     }
 
     if (white_surround == 1) {
@@ -874,35 +874,6 @@ let browserVersion = function(){
     return M;
 };
 
-let agtm_json = `
-{
-	"hdr_reference_white": 100,
-	"baseline_hdr_headroom": 2.300448,
-	"gain_application_space_primaries": 9,
-	"gain_application_offset": 0,
-	"gain_min":-2.300448,
-	"gain_span":2.300448,
-  "alternates":[
-    {
-      "hdr_headroom":0.0,
-	    "component_mix_params": { "max": 1.0 },
-      "piecewise_cubic": {
-        "m_min":-0.989021,
-        "m_span":0.989021,
-        "control_points":[
-          {"x":0.203000, "y":0.565302, "m":1.000000},
-          {"x":0.253750, "y":0.532275, "m":0.036706},
-          {"x":0.355250, "y":0.429329, "m":0.000000},
-          {"x":0.507500, "y":0.294010, "m":0.198370},
-          {"x":0.812000, "y":0.094438, "m":0.445995},
-          {"x":1.000000, "y":0.000000, "m":0.532752}
-        ]
-      }
-    }
-  ]
-}
-`;
-
 class AdaptiveGtmRenderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -931,7 +902,7 @@ class AdaptiveGtmRenderer {
     }
 
     try {
-      this.canvas.configureHighDynamicRange({ mode:'extended' /*, agtm:agtm_json */ });
+      this.canvas.configureHighDynamicRange({ mode:'extended' });
     } catch(err) {
       warningsText = 'Missing experimental feature configureHighDynamicRange!!!<br>Enable "Experimental Web Platform Features" in chrome://flags';
     }
@@ -1042,8 +1013,8 @@ class AdaptiveGtmRenderer {
       gl.uniform1f(gl.getUniformLocation(this.program, 'wst_x2'),
                    this.metadata.white_surround_transform.x2);
     }
-    gl.uniform1f(gl.getUniformLocation(this.program, 'hdr_reference_white'),
-                 this.metadata.hdr_reference_white);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'hdrReferenceWhite'),
+                 this.metadata.hdrReferenceWhite);
 
     this.agtm.setUniforms(this.framebuffer_log2_headroom, this.program, 2);
  
@@ -1385,8 +1356,8 @@ let main = function() {
 
   LumSatSlider.addEventListener('input', function(e) {
     let value = Number(LumSatSlider.value);
-    for (let i = 0; i < metadata.altr.length; ++i) {
-      let mix = metadata.altr[i].mix;
+    for (let i = 0; i < metadata.headroomAdaptiveToneMap.altr.length; ++i) {
+      let mix = metadata.headroomAdaptiveToneMap.altr[i].mix;
       mix.rgb[0] = 0;
       mix.rgb[0] = 0;
       mix.rgb[0] = 0;
