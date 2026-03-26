@@ -108,14 +108,14 @@ class AgtmToneMapper {
       return;
     }
 
-    const altr = this.metadata.headroomAdaptiveToneMap.altr;
+    const alternateImages = this.metadata.headroomAdaptiveToneMap.alternateImages;
     let curve_pixels = new Float32Array(32 * 4 * 4);
-    for (let i = 0; i < altr.length; ++i) {
+    for (let i = 0; i < alternateImages.length; ++i) {
       for (let jj = 0; jj < 32; ++jj) {
-        let j = jj < altr[i].curve.length ? jj : (altr[i].curve.length - 1);
-        curve_pixels[32*4*i + 4*j + 0] = altr[i].curve[j].x;
-        curve_pixels[32*4*i + 4*j + 1] = altr[i].curve[j].y;
-        curve_pixels[32*4*i + 4*j + 2] = altr[i].curve[j].m;
+        let j = jj < alternateImages[i].curve.length ? jj : (alternateImages[i].curve.length - 1);
+        curve_pixels[32*4*i + 4*j + 0] = alternateImages[i].curve[j].x;
+        curve_pixels[32*4*i + 4*j + 1] = alternateImages[i].curve[j].y;
+        curve_pixels[32*4*i + 4*j + 2] = alternateImages[i].curve[j].m;
         curve_pixels[32*4*i + 4*j + 3] = 0;
       }
     }
@@ -134,7 +134,7 @@ class AgtmToneMapper {
     let m = this.metadata;
     let gl = this.gl;
     let a = AgtmAdapt(m.headroomAdaptiveToneMap, targeted_hdr_headroom);
-    let altr = m.headroomAdaptiveToneMap.altr;
+    let alternateImages = m.headroomAdaptiveToneMap.alternateImages;
 
     gl.activeTexture(gl.TEXTURE0 + tex0);
     gl.bindTexture(gl.TEXTURE_2D, this.curve_texture);
@@ -147,13 +147,13 @@ class AgtmToneMapper {
       let w = a[0].weight;
       gl.uniform1f(gl.getUniformLocation(p, 'weight_i'), w);
       gl.uniform1f(gl.getUniformLocation(p, 'curve_texcoord_y_i'), (i + 0.5) / 4.0);
-      gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_i'), altr[i].curve.length);
-      gl.uniform3f(gl.getUniformLocation(p, 'mix_rgb_i'), altr[i].mix.rgb[0],
-                                                          altr[i].mix.rgb[1],
-                                                          altr[i].mix.rgb[2]);
-      gl.uniform3f(gl.getUniformLocation(p, 'mix_Mmc_i'), altr[i].mix.max,
-                                                          altr[i].mix.min,
-                                                          altr[i].mix.channel);
+      gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_i'), alternateImages[i].curve.length);
+      gl.uniform3f(gl.getUniformLocation(p, 'mix_rgb_i'), alternateImages[i].componentMix.red,
+                                                          alternateImages[i].componentMix.green,
+                                                          alternateImages[i].componentMix.blue);
+      gl.uniform3f(gl.getUniformLocation(p, 'mix_Mmc_i'), alternateImages[i].componentMix.max,
+                                                          alternateImages[i].componentMix.min,
+                                                          alternateImages[i].componentMix.component);
     }
     if (a.length < 2) {
       gl.uniform1f(gl.getUniformLocation(p, 'weight_j'), 0);
@@ -162,13 +162,13 @@ class AgtmToneMapper {
       let w = a[1].weight;
       gl.uniform1f(gl.getUniformLocation(p, 'weight_j'), w);
       gl.uniform1f(gl.getUniformLocation(p, 'curve_texcoord_y_j'), (j + 0.5) / 4.0);
-      gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_j'), altr[j].curve.length);
-      gl.uniform3f(gl.getUniformLocation(p, 'mix_rgb_j'), altr[j].mix.rgb[0],
-                                                          altr[j].mix.rgb[1],
-                                                          altr[j].mix.rgb[2]);
-      gl.uniform3f(gl.getUniformLocation(p, 'mix_Mmc_j'), altr[j].mix.max,
-                                                          altr[j].mix.min,
-                                                          altr[j].mix.channel);
+      gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_j'), alternateImages[j].curve.length);
+      gl.uniform3f(gl.getUniformLocation(p, 'mix_rgb_j'), alternateImages[j].componentMix.red,
+                                                          alternateImages[j].componentMix.green,
+                                                          alternateImages[j].componentMix.blue);
+      gl.uniform3f(gl.getUniformLocation(p, 'mix_Mmc_j'), alternateImages[j].componentMix.max,
+                                                          alternateImages[j].componentMix.min,
+                                                          alternateImages[j].componentMix.component);
     }
     gl.uniform1i(gl.getUniformLocation(p, 'gain_application_space_primaries'),
                  m.gain_application_space_primaries);

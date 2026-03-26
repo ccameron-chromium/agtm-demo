@@ -30,17 +30,12 @@ let linearToExtended = function(linear, metadata) {
   return linear / metadata.hdrReferenceWhite;
 }
 
-let getWstFunction = function(metadata) {
-  return new Bezier(WhiteSurroundTransform.checked ?
-                    metadata.white_surround_transform : null);
-}
-
 let onMetadataChanged = function() {
   curve_editor.setMetadata(metadata);
   hdr_preview.setMetadata(metadata);
   let json = JSON
         .stringify(metadata, null, 2)
-        .replace(/(mix": \{)([^}]+)/g,
+        .replace(/(componentMix": \{)([^}]+)/g,
                  (_, a, b) => a + b.replace(/\s+/g, ' '))
         .replace(/("x": )([^m]+)/g,
                  (_, a, b) => a + b.replace(/\s+/g, ' '));
@@ -114,8 +109,6 @@ class ImageStats {
     let toRelativeLinear = function(data_encoded, metadata) {
       const N = data_encoded.length / 4;
       let result = new Float32Array(data_encoded.length);
-      let wst = getWstFunction(metadata);
-      console.log('Wst: 0.01:' + wst.evaluate(0.01));
       for (let i = 0; i < N; ++i) {
         const offset = 4*i;
         let rgb = [data_encoded[offset+0],
@@ -139,9 +132,6 @@ class ImageStats {
           }
         }
         for (let c = 0; c < 3; ++c) {
-          rgb[c] = wst.evaluate(rgb[c]);
-        }
-        for (let c = 0; c < 3; ++c) {
           result[offset+c] = rgb[c];
         }
       }
@@ -149,23 +139,18 @@ class ImageStats {
     }
 
     let evaluateMix = function(data, mix) {
-      const mix_rgb = mix.rgb;
-      const mix_max = mix.max;
-      const mix_min = mix.min;
-      const mix_channel = mix["channel"];
       const N = data.length / 4;
-
       let result = new Float32Array(data.length);
       for (let i = 0; i < N; ++i) {
         const offset = 4*i;
         const rgb = [data[offset+0], data[offset+1], data[offset+2]];
-        const mix_common = mix_rgb[0]  * rgb[0] +
-                           mix_rgb[1]  * rgb[1] +
-                           mix_rgb[2]  * rgb[2] +
-                           mix_max * max(max(rgb[0], rgb[1]), rgb[2]) +
-                           mix_min * min(min(rgb[0], rgb[1]), rgb[2]);
+        const mix_common = mix.red   * rgb[0] +
+                           mix.green * rgb[1] +
+                           mix.blue  * rgb[2] +
+                           mix.max   * max(max(rgb[0], rgb[1]), rgb[2]) +
+                           mix.min   * min(min(rgb[0], rgb[1]), rgb[2]);
         for (let c = 0; c < 3; ++c) {
-          result[offset + c] = mix_channel * rgb[c] + mix_common;
+          result[offset + c] = mix.component * rgb[c] + mix_common;
         }
       }
       return result;
@@ -307,7 +292,7 @@ class CurveEditor {
       }
     }
     this.metadata = structuredClone(metadata);
-    this.curve = new PiecewiseCubic(metadata.headroomAdaptiveToneMap.altr[this.altr_index].curve);
+    this.curve = new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].curve);
     this.draw();
   }
 
@@ -419,13 +404,11 @@ class CurveEditor {
     {
       let p = this.linearToView({x:1, y:0});
       let text = this.metadata.hdrReferenceWhite + ' nits';
-      let wst = getWstFunction(metadata);
 
       this.context.fillText(text, p.x - 20, p.y + 40);
       if (p.x > this.canvas.width / 2) {
         let drawNits = function(tt, nits) {
           let x = nits / tt.metadata.hdrReferenceWhite;
-          x = wst.evaluate(x);
           let p = tt.linearToView({x:x, y:0});
           text = nits + ' nits';
           tt.context.fillText(text, p.x, p.y + 40);
@@ -529,16 +512,12 @@ class CurveEditor {
   }
   drawCurve(adaptation, headroom, color) {
     this.context.save();
-
-    console.log(adaptation);
     let curves = adaptation.map((item, _) => 
-      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.altr[item.index].curve)});
-    console.log(curves);
+      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[item.index].curve)});
 
     // Draw control points only if a single curve was requested.
     if (adaptation.length === 1 && headroom == null) {
       let curve = curves[0];
-      console.log(curve);
       this.context.strokeStyle = color + 'FF';
       this.context.fillStyle = color + 'FF';
       for (let i = 0; i < curve.control_points.length; ++i) {
@@ -563,8 +542,6 @@ class CurveEditor {
       this.context.beginPath();
       this.context.lineWidth = 4;
       this.context.strokeStyle = color + 'A0';
-      console.log('xxxxx');
-      console.log(adaptation.length);
       for (let v_x = this.view_offset.x; v_x < this.canvas.width; v_x += 2) {
         let x = this.viewToModel({x:v_x}).x;
         let y = 0;
@@ -606,7 +583,7 @@ class CurveEditor {
     this.drawHistogram();
     this.drawIdentity();
     if (this.metadata) {
-      for (let i = 0; i < this.metadata.headroomAdaptiveToneMap.altr.length; ++i) {
+      for (let i = 0; i < this.metadata.headroomAdaptiveToneMap.alternateImages.length; ++i) {
         this.drawCurve([{index:i, weight:1}], null, i == this.altr_index ? '#FF0000' : '#808080');
       }
       if (this.preview_headroom != null) {
@@ -618,7 +595,7 @@ class CurveEditor {
   //////////////////////////////////////////////////////////////////////////////
   // Event handling
   onModelChanged() {
-    this.metadata.headroomAdaptiveToneMap.altr[this.altr_index].curve = this.curve.getControlPoints();
+    this.metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].curve = this.curve.getControlPoints();
     this.model_changed_callback(this.metadata);
   }
 
@@ -775,27 +752,6 @@ const fs = `#version 300 es
     return rgb;
   }
 
-  float EvaluateWst(float x) {
-    float x0 = 0.0;
-    float y0 = x0;
-    float x1 = wst_x1;
-    float y1 = wst_y1;
-    float x2 = wst_x2;
-    float y2 = x2;
-    if (x > x2) {
-      return x;
-    }
-    float a_x = x0 - 2.0*x1 + x2;
-    float b_x = 2.0*x1 - 2.0*x2;
-    float c_x = x2;
-    float a_y = y0 - 2.0*y1 + y2;
-    float b_y = 2.0*y1 - 2.0*y2;
-    float c_y = y2;
-    float d = sqrt(b_x*b_x - 4.0 * a_x * (c_x - x));
-    float t = (-b_x - d) / (2.0*a_x);
-    return a_y*t*t + b_y*t + c_y;
-  }
-
   void main() {
     vec3 rgb = texture(content, texcoord).rgb;
     rgb = ApplyOetfInv(rgb, texture_trfn);
@@ -807,14 +763,6 @@ const fs = `#version 300 es
     }
     if (texture_trfn == kTransferPQ) {
       rgb *= 10000.0 / hdrReferenceWhite;
-    }
-
-    if (white_surround == 1) {
-      for (int c = 0; c < 3; ++c) {
-        if (rgb[c] < 1.0) {
-          rgb[c] = EvaluateWst(rgb[c]);
-        }
-      }
     }
 
     // Convert to gain application color space.
@@ -1194,7 +1142,6 @@ function onFile(name, f) {
 
 function onFileList(files) {
   event.preventDefault();
-  console.log(files);
   let video_file = null;
   let image_file = null;
   let json_file = null;
@@ -1204,7 +1151,6 @@ function onFileList(files) {
 }
 
 let fetchFile = function(filename) {
-  console.log(filename);
   const myRequest = new Request(filename);
   fetch(myRequest)
     .then((response) => response.blob())
@@ -1271,7 +1217,6 @@ let main = function() {
     }
   });
   Metadata.addEventListener('change', function (e) {
-    console.log(Metadata.value);
     if (Metadata.value == 1)
       fetchFile('data/lut3d-with.json');
     if (Metadata.value == 2)
@@ -1331,7 +1276,6 @@ let main = function() {
     onMetadataChanged();
   });
   TimeSlider.addEventListener('input', function(e) {
-    console.log(TimeSlider.value);
     MyVideo.currentTime = Number(TimeSlider.value);
   }, false);
   TimeSliderValue.addEventListener('change', function(e) {
@@ -1356,14 +1300,14 @@ let main = function() {
 
   LumSatSlider.addEventListener('input', function(e) {
     let value = Number(LumSatSlider.value);
-    for (let i = 0; i < metadata.headroomAdaptiveToneMap.altr.length; ++i) {
-      let mix = metadata.headroomAdaptiveToneMap.altr[i].mix;
-      mix.rgb[0] = 0;
-      mix.rgb[0] = 0;
-      mix.rgb[0] = 0;
-      mix.max = value;
-      mix.min = 0;
-      mix.channel = 1 - value;
+    for (let i = 0; i < metadata.headroomAdaptiveToneMap.alternateImages.length; ++i) {
+      let mix = metadata.headroomAdaptiveToneMap.alternateImages[i].componentMix;
+      mix.red       = 0;
+      mix.green     = 0;
+      mix.blue      = 0;
+      mix.max       = value;
+      mix.min       = 0;
+      mix.component = 1 - value;
     }
     onMetadataChanged();
   }, false);

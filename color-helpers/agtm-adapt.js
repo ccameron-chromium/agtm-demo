@@ -13,18 +13,18 @@ let AgtmAdapt = function(headroomAdaptiveToneMap, H_target) {
   const kInvalidIndex = -1;
 
   const H_baseline = headroomAdaptiveToneMap.baselineHdrHeadroom;
-  const altr = headroomAdaptiveToneMap.altr;
-  for (let i = 0; i < altr.length; ++i) {
-    if (N == i && H_baseline < altr[i].headroom) {
+  const alternateImages = headroomAdaptiveToneMap.alternateImages;
+  for (let i = 0; i < alternateImages.length; ++i) {
+    if (N == i && H_baseline < alternateImages[i].headroom) {
         // Insert the baseline HDR headroom before the indices as they are visited.
         indices[N] = kInvalidIndex;
         H[N++] = H_baseline;
     }
     indices[N] = i;
-    H[N] = altr[i].headroom;
+    H[N] = alternateImages[i].headroom;
     N += 1;
   }
-  if (N == altr.length) {
+  if (N == alternateImages.length) {
       // Insert the baseline HDR headroom at the end if it has not yet been inserted.
       indices[N] = kInvalidIndex;
       H[N++] = H_baseline;
@@ -64,22 +64,22 @@ let AgtmAdapt = function(headroomAdaptiveToneMap, H_target) {
 
   
   let altr_min = 0;
-  let altr_max = headroomAdaptiveToneMap.altr.length;
+  let altr_max = headroomAdaptiveToneMap.alternateImages.length;
 
   while (altr_max - altr_min > 1) {
     let altr_mid = Math.round((altr_min + altr_max) / 2);
-    if (headroom <= headroomAdaptiveToneMap.altr[altr_mid].headroom) {
+    if (headroom <= headroomAdaptiveToneMap.alternateImages[altr_mid].headroom) {
       altr_max = altr_mid;
     }
-    if (headroom >= headroomAdaptiveToneMap.altr[altr_mid].headroom) {
+    if (headroom >= headroomAdaptiveToneMap.alternateImages[altr_mid].headroom) {
       altr_min = altr_mid;
     }
   }
 
   let w_min = 1.0;
   let w_max = 0.0;
-  let h_min = headroomAdaptiveToneMap.altr[altr_min].headroom;
-  let h_max = headroomAdaptiveToneMap.altr[altr_max].headroom;
+  let h_min = headroomAdaptiveToneMap.alternateImages[altr_min].headroom;
+  let h_max = headroomAdaptiveToneMap.alternateImages[altr_max].headroom;
   if (h_max > h_min) {
     w_max = clamp((headroom - h_min) / (h_max - h_min), 0.0, 1.0);
     w_min = 1.0 - w_max;
