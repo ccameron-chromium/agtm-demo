@@ -292,7 +292,8 @@ class CurveEditor {
       }
     }
     this.metadata = structuredClone(metadata);
-    this.curve = new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].curve);
+    this.curve = new PiecewiseCubic(
+        metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].gainCurve.controlPoints);
     this.draw();
   }
 
@@ -513,7 +514,7 @@ class CurveEditor {
   drawCurve(adaptation, headroom, color) {
     this.context.save();
     let curves = adaptation.map((item, _) => 
-      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[item.index].curve)});
+      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[item.index].gainCurve.controlPoints)});
 
     // Draw control points only if a single curve was requested.
     if (adaptation.length === 1 && headroom == null) {
@@ -595,7 +596,8 @@ class CurveEditor {
   //////////////////////////////////////////////////////////////////////////////
   // Event handling
   onModelChanged() {
-    this.metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].curve = this.curve.getControlPoints();
+    this.metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].gainCurve.controlPoints =
+        this.curve.getControlPoints();
     this.model_changed_callback(this.metadata);
   }
 
