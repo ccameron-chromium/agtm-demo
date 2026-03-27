@@ -1,0 +1,8 @@
+{
+  "hdrReferenceWhite": 203,
+  "headroomAdaptiveToneMap": {
+    "baselineHdrHeadroom": 0,
+    "gainApplicationChromaticities": [0.64, 0.33, 0.3, 0.6, 0.15, 0.06, 0.3127, 0.329],
+    "alternateImages": []
+  }
+}

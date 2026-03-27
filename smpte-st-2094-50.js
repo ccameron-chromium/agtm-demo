@@ -27,6 +27,63 @@ export const binaryToColorVolumeTransform = function(binary) {
   return semanticsColorVolumeTransform(binaryToSyntax(binary));
 }
 
+// Gemini-generated function to make pretty JSON for an object.
+export const toString = function(data, indent = 2) {
+  // Helper to determine if an array only contains primitives
+  const isFlatArray = (arr) => {
+    return arr.every(item => 
+      typeof item !== 'object' || item === null
+    );
+  };
+
+  function format(curr, level, flatten = false) {
+    const currentIndent = ' '.repeat(level * indent);
+    const nextIndent = ' '.repeat((level + 1) * indent);
+
+    if (Array.isArray(curr)) {
+      // Case 1: Array of primitives -> Single line: [1, 2, 3]
+      if (isFlatArray(curr)) {
+        // JSON.stringify gives [1,2,3], we add spaces after commas for readability
+        return JSON.stringify(curr).replace(/,/g, ', ');
+      }
+      
+      // Case 2: Array of Objects/Arrays -> Standard multiline formatting
+      const items = curr.map(v => format(v, level + 1, flatten));
+      return `[\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}]`;
+    }
+    
+    if (typeof curr === 'object' && curr !== null) {
+      const keys = Object.keys(curr);
+      if (keys.length === 0) return '{}';
+      
+      const items = keys.map(key => {
+        let nextFlatten = false;
+        nextFlatten |= key === "componentMix";
+        nextFlatten |= key === "controlPoints";
+        nextFlatten |= key === "red";
+        nextFlatten |= key === "green";
+        nextFlatten |= key === "blue";
+        nextFlatten |= key === "white";
+        const val = format(curr[key], level + 1, nextFlatten);
+        // Ensure keys are quoted strings
+        return `"${key}": ${val}`;
+      });
+      if (flatten) {
+        return `{ ${items.join(`, `)} }`;
+      } else {
+        return `{\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}}`;
+      }
+    }
+
+    // Primitives (strings, numbers, booleans, null)
+    if (typeof(curr) == 'number') {
+      return JSON.stringify(Number(Number(curr).toFixed(8)));
+    }
+    return JSON.stringify(curr);
+  }
+  return format(data, 0);
+}
+
 ////////////////////////////////////////////////////////////////////////
 // Helper classes for reading/writing bitstreams (Gemini generated)
 

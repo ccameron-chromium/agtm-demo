@@ -17,64 +17,6 @@ window.SmpteSt2094App5 = SmpteSt2094App5;
 </script>
 <script>
 
-// Gemini-generated function to make pretty JSON for an object.
-function compactJson(data, indent = 2) {
-  // Helper to determine if an array only contains primitives
-  const isFlatArray = (arr) => {
-    return arr.every(item => 
-      typeof item !== 'object' || item === null
-    );
-  };
-
-  function format(curr, level, flatten = false) {
-    const currentIndent = ' '.repeat(level * indent);
-    const nextIndent = ' '.repeat((level + 1) * indent);
-
-    if (Array.isArray(curr)) {
-      // Case 1: Array of primitives -> Single line: [1, 2, 3]
-      if (isFlatArray(curr)) {
-        // JSON.stringify gives [1,2,3], we add spaces after commas for readability
-        return JSON.stringify(curr).replace(/,/g, ', ');
-      }
-      
-      // Case 2: Array of Objects/Arrays -> Standard multiline formatting
-      const items = curr.map(v => format(v, level + 1, flatten));
-      return `[\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}]`;
-    }
-    
-    if (typeof curr === 'object' && curr !== null) {
-      const keys = Object.keys(curr);
-      if (keys.length === 0) return '{}';
-      
-      const items = keys.map(key => {
-        let nextFlatten = false;
-        nextFlatten |= key === "componentMix";
-        nextFlatten |= key === "controlPoints";
-        nextFlatten |= key === "red";
-        nextFlatten |= key === "green";
-        nextFlatten |= key === "blue";
-        nextFlatten |= key === "white";
-        const val = format(curr[key], level + 1, nextFlatten);
-        // Ensure keys are quoted strings
-        return `"${key}": ${val}`;
-      });
-      if (flatten) {
-        return `{ ${items.join(`, `)} }`;
-      } else {
-        return `{\n${nextIndent}${items.join(`,\n${nextIndent}`)}\n${currentIndent}}`;
-      }
-    }
-
-    // Primitives (strings, numbers, booleans, null)
-    if (typeof(curr) == 'number') {
-      return JSON.stringify(Number(Number(curr).toFixed(8)));
-    }
-    return JSON.stringify(curr);
-  }
-
-  return format(data, 0);
-}
-
 const kEditingColor = "white";
 const kErrorColor = "rgb(255, 200, 200)";
 const kPassColor = "rgb(200, 255, 200)";
@@ -94,7 +36,7 @@ let onParse = function() {
     const binary = new Uint8Array(list);
     let syntax = SmpteSt2094App5.binaryToSyntax(binary);
     Syntax.style.backgroundColor = kPassColor;
-    Syntax.value = compactJson(syntax);
+    Syntax.value = SmpteSt2094App5.toString(syntax);
     resizeAll();
   } catch (e) {
     throw(e);
@@ -127,7 +69,7 @@ let onToJson = function() {
     let syntax = JSON.parse(Syntax.value);
     let metadata = SmpteSt2094App5.syntaxToColorVolumeTransform(syntax);
     Semantics.style.backgroundColor = kPassColor;
-    Semantics.value = compactJson(metadata);
+    Semantics.value = SmpteSt2094App5.toString(metadata);
     resizeAll();
   } catch (e) {
     throw(e);
@@ -141,7 +83,7 @@ let onFromJson = function() {
     let metadata = JSON.parse(Semantics.value);
     let syntax = SmpteSt2094App5.colorVolumeTransformToSyntax(metadata);
     Syntax.style.backgroundColor = kPassColor;
-    Syntax.value = compactJson(syntax);
+    Syntax.value = SmpteSt2094App5.toString(syntax);
     resizeAll();
   } catch (e) {
     throw(e);

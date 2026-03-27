@@ -80,9 +80,7 @@ const kAgtmToneMapperGLSL = `
                 EvaluateGainCurve(M.b, curve_texcoord_y, curve_N_cp));
   }
 
-  vec3 AgtmToneMap(vec3 rgb, int input_color_primaries) {
-    rgb = primariesConvert(rgb, input_color_primaries, gain_application_space_primaries);
-
+  vec3 AgtmToneMapInGainApplicationColorSpace(vec3 rgb) {
     vec3 G = vec3(0.0);
     if (weight_i > 0.0) {
       G += weight_i *
@@ -92,10 +90,7 @@ const kAgtmToneMapperGLSL = `
       G += weight_j *
            AgtmLogGain(rgb, mix_rgb_j, mix_Mmc_j, curve_texcoord_y_j, curve_N_cp_j);
     }
-    rgb *= exp2(G);
-
-    rgb = primariesConvert(rgb, gain_application_space_primaries, input_color_primaries);
-    return rgb;
+    return rgb * exp2(G);
   }
   `
 
@@ -111,7 +106,7 @@ class AgtmToneMapper {
     const alternateImages = this.metadata.headroomAdaptiveToneMap.alternateImages;
     let curve_pixels = new Float32Array(32 * 4 * 4);
     for (let i = 0; i < alternateImages.length; ++i) {
-      let c = alternateImages[i].gainCurve.controlPoints;
+      let c = alternateImages[i].colorGainFunction.gainCurve.controlPoints;
       for (let jj = 0; jj < 32; ++jj) {
         let j = jj < c.length ? jj : (c.length - 1);
         curve_pixels[32*4*i + 4*j + 0] = c[j].x;
@@ -146,8 +141,8 @@ class AgtmToneMapper {
     } else {
       let i = a[0].index;
       let w = a[0].weight;
-      let c = alternateImages[i].gainCurve.controlPoints;
-      let m = alternateImages[i].componentMix;
+      let c = alternateImages[i].colorGainFunction.gainCurve.controlPoints;
+      let m = alternateImages[i].colorGainFunction.componentMix;
       gl.uniform1f(gl.getUniformLocation(p, 'weight_i'), w);
       gl.uniform1f(gl.getUniformLocation(p, 'curve_texcoord_y_i'), (i + 0.5) / 4.0);
       gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_i'), c.length);
@@ -159,8 +154,8 @@ class AgtmToneMapper {
     } else {
       let j = a[1].index;
       let w = a[1].weight;
-      let c = alternateImages[j].gainCurve.controlPoints;
-      let m = alternateImages[j].componentMix;
+      let c = alternateImages[j].colorGainFunction.gainCurve.controlPoints;
+      let m = alternateImages[j].colorGainFunction.componentMix;
       gl.uniform1f(gl.getUniformLocation(p, 'weight_j'), w);
       gl.uniform1f(gl.getUniformLocation(p, 'curve_texcoord_y_j'), (j + 0.5) / 4.0);
       gl.uniform1f(gl.getUniformLocation(p, 'curve_N_cp_j'), c.length);

@@ -1,0 +1,21 @@
+{
+  "hdrReferenceWhite": 203,
+  "headroomAdaptiveToneMap": {
+    "baselineHdrHeadroom": 2,
+    "gainApplicationChromaticities": [0.708, 0.292, 0.17, 0.797, 0.131, 0.046, 0.3127, 0.329],
+    "alternateImages": [
+      {
+        "hdrHeadroom": 0,
+        "colorGainFunction": {
+          "componentMix": { "red": 0, "green": 0, "blue": 0, "max": 1, "min": 0, "component": 0 },
+          "gainCurve": {
+            "controlPoints": [
+              { "x": 0.939, "y": -2.105, "m": 0 },
+              { "x": 1, "y": 0, "m": 0 }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

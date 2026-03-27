@@ -3,6 +3,12 @@
 <meta charset="UTF-8">
 <title>Adaptive Tone Mapping Demo</title>
 
+<script type="module">
+// Import SmpteSt2094App5 into the global namespace
+import * as SmpteSt2094App5 from "./smpte-st-2094-50.js";
+window.SmpteSt2094App5 = SmpteSt2094App5;
+</script>
+
 <script src="color-helpers/math-helpers.js"></script>
 <script src="color-helpers/color-functions.js"></script>
 <script src="color-helpers/piecewise-cubic.js"></script>
@@ -33,13 +39,7 @@ let linearToExtended = function(linear, metadata) {
 let onMetadataChanged = function() {
   curve_editor.setMetadata(metadata);
   hdr_preview.setMetadata(metadata);
-  let json = JSON
-        .stringify(metadata, null, 2)
-        .replace(/(componentMix": \{)([^}]+)/g,
-                 (_, a, b) => a + b.replace(/\s+/g, ' '))
-        .replace(/("x": )([^m]+)/g,
-                 (_, a, b) => a + b.replace(/\s+/g, ' '));
-  MetadataJSON.value = json;
+  MetadataJSON.value = SmpteSt2094App5.toString(metadata);
 
   if (image_bitmap_stats) {
     curve_editor.setGainCurveMixHistogram(
@@ -292,8 +292,10 @@ class CurveEditor {
       }
     }
     this.metadata = structuredClone(metadata);
-    this.curve = new PiecewiseCubic(
-        metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].gainCurve.controlPoints);
+    if (this.altr_index < metadata.headroomAdaptiveToneMap.alternateImages.length) {
+      this.curve = new PiecewiseCubic(
+          metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].colorGainFunction.gainCurve.controlPoints);
+    }
     this.draw();
   }
 
@@ -514,7 +516,7 @@ class CurveEditor {
   drawCurve(adaptation, headroom, color) {
     this.context.save();
     let curves = adaptation.map((item, _) => 
-      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[item.index].gainCurve.controlPoints)});
+      {return new PiecewiseCubic(metadata.headroomAdaptiveToneMap.alternateImages[item.index].colorGainFunction.gainCurve.controlPoints)});
 
     // Draw control points only if a single curve was requested.
     if (adaptation.length === 1 && headroom == null) {
@@ -596,7 +598,7 @@ class CurveEditor {
   //////////////////////////////////////////////////////////////////////////////
   // Event handling
   onModelChanged() {
-    this.metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].gainCurve.controlPoints =
+    this.metadata.headroomAdaptiveToneMap.alternateImages[this.altr_index].colorGainFunction.gainCurve.controlPoints =
         this.curve.getControlPoints();
     this.model_changed_callback(this.metadata);
   }
@@ -714,13 +716,11 @@ const fs = `#version 300 es
   precision highp float;
   uniform sampler2D content;
   uniform int texture_trfn;
-  uniform int texture_primaries;
+  uniform vec3 texture_primaries_Y;
   uniform int framebuffer_trfn;
-  uniform int framebuffer_primaries;
-  uniform int white_surround;
-  uniform float wst_x1;
-  uniform float wst_y1;
-  uniform float wst_x2;
+  uniform mat3 primary_matrix_texture_to_gain;
+  uniform mat3 primary_matrix_gain_to_framebuffer;
+
   in vec2 texcoord;
   out vec4 fragColor;
 
@@ -743,22 +743,18 @@ const fs = `#version 300 es
                 sign(x[2]) * transferFromLinear(abs(x[2]), transfer));
   }
 
-  vec3 ApplyOotf(vec3 rgb, int primaries, int transfer) {
+  vec3 ApplyOotf(vec3 rgb, vec3 Y, int transfer) {
     if (transfer != kTransferHLG) {
       return rgb;
     }
-    rgb = primariesConvert(rgb, primaries, kPrimariesRec2020);
-    float Y = 0.2627 * rgb.r + 0.6780 * rgb.g + 0.0593 * rgb.b;
-    rgb *= pow(Y, 0.2);
-    rgb = primariesConvert(rgb, kPrimariesRec2020, primaries);
-    return rgb;
+    return rgb * pow(dot(Y, rgb), 0.2);
   }
 
   void main() {
     vec3 rgb = texture(content, texcoord).rgb;
     rgb = ApplyOetfInv(rgb, texture_trfn);
 
-    rgb = ApplyOotf(rgb, texture_primaries, texture_trfn);
+    rgb = ApplyOotf(rgb, texture_primaries_Y, texture_trfn);
 
     if (texture_trfn == kTransferHLG) {
       rgb *= 1000.0 / hdrReferenceWhite;
@@ -767,16 +763,13 @@ const fs = `#version 300 es
       rgb *= 10000.0 / hdrReferenceWhite;
     }
 
-    // Convert to gain application color space.
-    rgb = primariesConvert(rgb, texture_primaries, gain_application_space_primaries);
-
     // Apply gain curve.
-    rgb = AgtmToneMap(rgb, texture_primaries);
-
+    rgb = primary_matrix_texture_to_gain * rgb;
+    rgb = AgtmToneMapInGainApplicationColorSpace(rgb);
+    rgb = primary_matrix_gain_to_framebuffer * rgb;
     rgb *= linear_scale;
 
     // Convert to the framebuffer encoding.
-    rgb = primariesConvert(rgb, gain_application_space_primaries, framebuffer_primaries);
     rgb = ApplyOetf(rgb, framebuffer_trfn);
     rgb = clamp(rgb, 0.0, exp2(target_log2_headroom));
     fragColor.rgb = rgb;
@@ -941,28 +934,23 @@ class AdaptiveGtmRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.uniform1i(gl.getUniformLocation(this.program, 'content'), 0);
-
     gl.uniform1i(gl.getUniformLocation(this.program, 'framebuffer_trfn'), this.framebuffer_transfer);
-    gl.uniform1i(gl.getUniformLocation(this.program, 'framebuffer_primaries'), this.framebuffer_primaries);
     gl.uniform1f(gl.getUniformLocation(this.program, 'target_log2_headroom'), this.framebuffer_log2_headroom);
     gl.uniform1f(gl.getUniformLocation(this.program, 'linear_scale'), this.framebuffer_linear_scale);
-
-
- 
     gl.uniform1i(gl.getUniformLocation(this.program, 'texture_trfn'),
                  contentTransfer);
-    gl.uniform1i(gl.getUniformLocation(this.program, 'texture_primaries'),
-                 contentPrimaries);
-    gl.uniform1i(gl.getUniformLocation(this.program, 'white_surround'),
-                 WhiteSurroundTransform.checked);
-    if (WhiteSurroundTransform.checked) {
-      gl.uniform1f(gl.getUniformLocation(this.program, 'wst_x1'),
-                   this.metadata.white_surround_transform.x1);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'wst_y1'),
-                   this.metadata.white_surround_transform.y1);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'wst_x2'),
-                   this.metadata.white_surround_transform.x2);
-    }
+    gl.uniformMatrix3fv(
+        gl.getUniformLocation(this.program, 'primary_matrix_texture_to_gain'),
+        false,
+        chromaticityConversionMatrixColMajor(
+            colorSpaceChromaticities(contentPrimaries),
+            this.metadata.headroomAdaptiveToneMap.gainApplicationChromaticities));
+    gl.uniformMatrix3fv(
+        gl.getUniformLocation(this.program, 'primary_matrix_gain_to_framebuffer'),
+        false,
+        chromaticityConversionMatrixColMajor(
+            this.metadata.headroomAdaptiveToneMap.gainApplicationChromaticities,
+            colorSpaceChromaticities(this.framebuffer_primaries)));
     gl.uniform1f(gl.getUniformLocation(this.program, 'hdrReferenceWhite'),
                  this.metadata.hdrReferenceWhite);
 
@@ -1196,26 +1184,26 @@ let main = function() {
       if (a) fetchFile(a);
       if (b) fetchFile(b); 
     };
-    if (Content.value == 0)
-      loadContent('data/cow.avif', 'data/cow.json', kTransferPQ, kPrimariesRec2020);
-    if (Content.value == 8)
-      loadContent('data/cow-sdr.jpg', 'data/cow-sdr.json', kTransferSRGB, kPrimariesP3);
-    if (Content.value == 1)
-      loadContent('data/bmw-pq.png', 'data/demo.json', kTransferPQ, kPrimariesRec2020);
-    if (Content.value == 2)
-      loadContent('data/cairoli-av1.mp4', 'data/cairoli.json', kTransferHLG, kPrimariesRec2020);
-    if (Content.value == 3)
-      loadContent('data/b1421266c1.avif', 'data/dark-ws.json', kTransferPQ, kPrimariesRec2020);
-    if (Content.value == 4)
-      loadContent('data/out00037.avif', 'data/dark-ws.json', kTransferPQ, kPrimariesRec2020);
-    if (Content.value == 5)
-      loadContent('data/out02556.avif', 'data/dark-ws.json', kTransferPQ, kPrimariesRec2020);
-    if (Content.value == 6) {
-      loadContent('data/07-m3248-a131.avif', 'data/iceberg.json', kTransferPQ, kPrimariesRec2020);
-    }
-    if (Content.value == 7) {
-      setVideoSource('data/The World in HDR.mkv');
-      loadContent(null, 'data/demo.json', kTransferPQ, kPrimariesRec2020);
+    if (Content.value == 0) {
+      loadContent('data/cow.avif',
+                  'data/cow.json',
+                  kTransferPQ, kPrimariesRec2020);
+    } else if (Content.value == 1) {
+      loadContent('data/st2094-50-pq-headroom0.png',
+                  'data/st2094-50-pq-headroom0.json',
+                  kTransferPQ, kPrimariesSRGB);
+    } else if (Content.value == 2) {
+      loadContent('data/st2094-50-pq-headroomX.png',
+                  'data/st2094-50-pq-headroomX.json',
+                  kTransferPQ, kPrimariesSRGB);
+    } else if (Content.value == 3) {
+      loadContent('data/st2094-50-srgb-headroom2.png',
+                  'data/st2094-50-srgb-headroom2.json',
+                  kTransferSRGB, kPrimariesRec2020);
+    } else if (Content.value == 4) {
+      loadContent('data/st2094-50-srgb-headroomX.png',
+                  'data/st2094-50-srgb-headroomX.json',
+                  kTransferSRGB, kPrimariesRec2020);
     }
   });
   Metadata.addEventListener('change', function (e) {
@@ -1303,7 +1291,7 @@ let main = function() {
   LumSatSlider.addEventListener('input', function(e) {
     let value = Number(LumSatSlider.value);
     for (let i = 0; i < metadata.headroomAdaptiveToneMap.alternateImages.length; ++i) {
-      let mix = metadata.headroomAdaptiveToneMap.alternateImages[i].componentMix;
+      let mix = metadata.headroomAdaptiveToneMap.alternateImages[i].colorGainFunction.componentMix;
       mix.red       = 0;
       mix.green     = 0;
       mix.blue      = 0;
@@ -1326,11 +1314,6 @@ let main = function() {
   Foreground.addEventListener('change', function (e) { updateColors(); });
   NativeRendering.addEventListener('change', function (e) { resize(); });
   
-  WhiteSurroundTransform.addEventListener('change', function (e) {
-    onMetadataChanged();
-    hdr_preview.draw();
-  });
-
   UploadButton.addEventListener('change', function(e) {
     onFileList(UploadButton.files);
   });
@@ -1371,7 +1354,7 @@ let main = function() {
   }
 
   fetchFile('data/cow.avif');
-  fetchFile('data/demo.json');
+  fetchFile('data/cow.json');
 }
 </script>
 </head>
@@ -1389,14 +1372,10 @@ let main = function() {
     <label for="Content">Content</label>
     <select name="Content" id="Content">
       <option value=0 selected>Cow (Eric Chan)</option>
-      <option value=8>Cow (SDR JPEG base)</option>
-      <option value=1>BMW</option>
-      <option value=2>Cairoli</option>
-      <option value=6>Iceberg (Eric Chan)</option>
-      <option value=7>The World in HDR</option>
-      <option value=3>WST (Will Smith)</option>
-      <option value=4>WST (Stranger Things)</option>
-      <option value=5>WST (Stranger Things)</option>
+      <option value=1>Test PQ image A</option>
+      <option value=2>Test PQ image B</option>
+      <option value=3>Test sRGB image A</option>
+      <option value=4>Test sRGB image B</option>
     </select>
     <label for="Metadata">Metadata</label>
     <select name="Metadata" id="Metadata">
@@ -1469,8 +1448,6 @@ let main = function() {
           <p>
           <label for="QueryScreen">Use display's HDR headroom:</label>
           <input type="checkbox" id="QueryScreen"></input>
-          <label for="WhiteSurroundTransform">White surround:</label>
-          <input type="checkbox" id="WhiteSurroundTransform"></input>
           <label for="NativeRendering">Native rendering</label>
           <input type="checkbox" id="NativeRendering"></input>
           </p>

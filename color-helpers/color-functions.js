@@ -1,9 +1,4 @@
 const kColorFunctionGLSL = `
-const int kPrimariesSRGB = 1;
-const int kPrimariesRec2020 = 9;
-const int kPrimariesP3 = 12;
-const int kPrimariesXYZD50 = 1000;
-
 const int kTransferRec709 = 1;
 const int kTransferG22 = 4;
 const int kTransferG28 = 6;
@@ -12,60 +7,6 @@ const int kTransferRec2020_10bit = 14;
 const int kTransferRec2020_12bit = 15;
 const int kTransferPQ = 16;
 const int kTransferHLG = 18;
-
-mat3 primariesToXYZD50(int primaries) {
-  if (primaries == kPrimariesSRGB) {
-    return mat3(0.43606567, 0.2224884,  0.01391602,
-                0.38514709, 0.71687317, 0.09707642,
-                0.14306641, 0.06060791, 0.71409607);
-  }
-  if (primaries == kPrimariesRec2020) {
-    return mat3(0.673459,  0.279033,   -0.00193139,
-                0.165661,  0.675338,    0.0299794,
-                0.1251,    0.0456288,   0.797162);
-  }
-  if (primaries == kPrimariesP3) {
-    return mat3(0.515102,  0.241182,  -0.00104941,
-                0.291965,  0.692236,   0.0418818,
-                0.157153,  0.0665819,  0.784378);
-  }
-  if (primaries == kPrimariesXYZD50) {
-    return mat3(1.0, 0.0, 0.0,
-                0.0, 1.0, 0.0,
-                0.0, 0.0, 1.0);
-  }
-  return mat3(1.0);
-}
-mat3 primariesFromXYZD50(int primaries) {
-  if (primaries == kPrimariesSRGB) {
-    return mat3( 3.13411215, -0.97878729,  0.07198304,
-                -1.61739246,  1.91627959, -0.22898585,
-                -0.4906334,   0.03345471,  1.40538513);
-  }
-  if (primaries == kPrimariesRec2020) {
-    return mat3( 1.6472752,  -0.68261762,  0.02966273,
-                -0.39360248,  1.64761778, -0.06291669,
-                -0.23598029,  0.01281627,  1.25339643);
-  }
-  if (primaries == kPrimariesP3) {
-    return mat3( 2.40404516, -0.84222838,  0.04818706,
-                -0.98989869,  1.79885051, -0.09737385,
-                -0.39763172,  0.01604817,  1.27350664);
-  }
-  if (primaries == kPrimariesXYZD50) {
-    return mat3(1.0, 0.0, 0.0,
-                0.0, 1.0, 0.0,
-                0.0, 0.0, 1.0);
-  }
-  return mat3(1.0);
-}
-vec3 primariesConvert(vec3 rgb, int src, int dst) {
-  if (src == dst) {
-    return rgb;
-  }
-  return primariesFromXYZD50(dst) * primariesToXYZD50(src) * rgb;
-}
-
 
 float transferToLinear(float x, int transfer) {
   if (transfer == kTransferRec709 ||
@@ -199,3 +140,127 @@ let transferFunctionToLinear = function(x, transfer) {
   }
   return 0.0;
 }
+
+const chromaticityConversionMatrix = function(src_chromaticities, dst_chromaticities) {
+  const mat3Invert = function(M) {
+    const det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+                M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+                M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+    if (Math.abs(det) < 1e-12) return null; // Matrix is singular (no unique solution)
+    const det_inv = 1/det;
+    return [
+        [ (M[1][1] * M[2][2] - M[1][2] * M[2][1]) * det_inv,
+          (M[0][2] * M[2][1] - M[0][1] * M[2][2]) * det_inv,
+          (M[0][1] * M[1][2] - M[0][2] * M[1][1]) * det_inv ],
+        [ (M[1][2] * M[2][0] - M[1][0] * M[2][2]) * det_inv,
+          (M[0][0] * M[2][2] - M[0][2] * M[2][0]) * det_inv,
+          (M[0][2] * M[1][0] - M[0][0] * M[1][2]) * det_inv ],
+        [ (M[1][0] * M[2][1] - M[1][1] * M[2][0]) * det_inv,
+          (M[0][1] * M[2][0] - M[0][0] * M[2][1]) * det_inv,
+          (M[0][0] * M[1][1] - M[0][1] * M[1][0]) * det_inv ]];
+  };
+  const mat3Vec3Multiply = function(A, x) {
+    let b = [0,0,0];
+    for (let i = 0; i < 3; ++i)
+      for (let j = 0; j < 3; ++j)
+        b[i] += A[i][j] * x[j];
+    return b;
+  }
+  const mat3Multiply = function(...matrices) {
+    const mat3Mat3Multiply = function(A, B) {
+      let C = [[0,0,0],[0,0,0],[0,0,0]];
+      for (let i = 0; i < 3; ++i) 
+        for (let j = 0; j < 3; ++j)
+          for (let k = 0; k < 3; ++k)
+            C[i][j] += A[i][k] * B[k][j];
+      return C;
+    }
+    return matrices.reduce(mat3Mat3Multiply);
+  }
+  const mat3Diag = function(v) {
+    return [[v[0], 0, 0], [0, v[1], 0], [0, 0, v[2]]];
+  }
+  // Return the rgb to little-xyz matrix and the big-XYZ white point for the
+  // specified chromaticities.
+  const colorPrimariesWhiteAndMatrix = function(chromaticities) {
+      [rx, ry, gx, gy, bx, by, wx, wy] = chromaticities;
+      rgb_to_xyz = [[         rx,          gx,          bx],
+                    [         ry,          gy,          by],
+                    [1 - rx - ry, 1 - gx - gy, 1 - bx - by]];
+      w_XYZ = [wx / wy, 1, (1 - wx - wy) / wy];
+      return [rgb_to_xyz, w_XYZ];
+  }
+  // Return the chromatic adaptation matrix to convert from the big-XYZ white
+  // point src_w_XYZ to dst_w_XYZ.
+  const chromaticAdaptation = function(src_w_XYZ, dst_w_XYZ) {
+      // This is the Bradford XYZ to LMS matrix.
+      const XYZ_to_LMS = [
+            [ 0.8951,  0.2664, -0.1614],
+            [-0.7502,  1.7135,  0.0367],
+            [ 0.0389, -0.0685,  1.0296]];
+      const LMS_to_XYZ = mat3Invert(XYZ_to_LMS);
+      const src_w_LMS = mat3Vec3Multiply(XYZ_to_LMS, src_w_XYZ);
+      const dst_w_LMS = mat3Vec3Multiply(XYZ_to_LMS, dst_w_XYZ);
+      const src_to_dst_scale_in_LMS = [
+          dst_w_LMS[0] / src_w_LMS[0],
+          dst_w_LMS[1] / src_w_LMS[1],
+          dst_w_LMS[2] / src_w_LMS[2]];
+      return mat3Multiply(
+          LMS_to_XYZ,
+          mat3Diag(src_to_dst_scale_in_LMS),
+          XYZ_to_LMS);
+  };
+
+  // Compute the src RGB to big-XYZ matrix. The big-XYZ matrix has its columns
+  // scaled such that the image of [1,1,1] is the white point.
+  [src_rgb_to_xyz, src_w_XYZ] = colorPrimariesWhiteAndMatrix(src_chromaticities);
+  let src_xyz_to_rgb = mat3Invert(src_rgb_to_xyz);                                      
+  let src_xyz_scale = mat3Vec3Multiply(src_xyz_to_rgb, src_w_XYZ);
+  let src_rgb_to_XYZ = mat3Multiply(
+      src_rgb_to_xyz, mat3Diag(src_xyz_scale));
+
+  // Compute the dst big-XYZ to RGB matrix.
+  [dst_rgb_to_xyz, dst_w_XYZ] = colorPrimariesWhiteAndMatrix(dst_chromaticities);
+  let dst_xyz_to_rgb = mat3Invert(dst_rgb_to_xyz);
+  let dst_xyz_scale = mat3Vec3Multiply(dst_xyz_to_rgb, src_w_XYZ);
+  [dst_rgb_to_xyz, dst_w_XYZ] = colorPrimariesWhiteAndMatrix(dst_chromaticities);
+  let dst_xyz_scale_inv = [
+      1/dst_xyz_scale[0],
+      1/dst_xyz_scale[1],
+      1/dst_xyz_scale[2]];
+  let dst_XYZ_to_rgb = mat3Multiply(
+      mat3Diag(dst_xyz_scale_inv), dst_xyz_to_rgb);
+
+  // Chromatic adaptation is needed only if src and dst have different white
+  // points.
+  const needs_chromatic_adaptation = src_w_XYZ[0] != dst_w_XYZ[0] ||
+                                     src_w_XYZ[1] != dst_w_XYZ[1] ||
+                                     src_w_XYZ[2] != dst_w_XYZ[2];
+  if (needs_chromatic_adaptation) {
+    return mat3Multiply(
+        dst_XYZ_to_rgb,
+        chromaticAdaptation(src_w_XYZ, dst_w_XYZ),
+        src_rgb_to_XYZ);
+  } else {
+    return mat3Multiply(dst_XYZ_to_rgb, src_rgb_to_XYZ);
+  }
+};
+const chromaticityConversionMatrixColMajor = function(src_chromaticities, dst_chromaticities) {
+  const m = chromaticityConversionMatrix(src_chromaticities, dst_chromaticities);
+  return [m[0][0], m[1][0], m[2][0],
+          m[0][1], m[1][1], m[2][1],
+          m[0][2], m[1][2], m[2][2]];
+};
+const colorSpaceChromaticities = function(primaries) {
+  if (primaries == kPrimariesSRGB) {
+    return [0.64, 0.33, 0.3, 0.6, 0.15, 0.06, 0.3127, 0.329];
+  }
+  if (primaries == kPrimariesP3) {
+    return [0.68, 0.32, 0.265, 0.69, 0.15, 0.06, 0.3127, 0.329];
+  }
+  if (primaries == kPrimariesRec2020) {
+    return [0.708, 0.292, 0.17, 0.797, 0.131, 0.046, 0.3127, 0.329];
+  }
+  throw('bad primaries');
+};
+
