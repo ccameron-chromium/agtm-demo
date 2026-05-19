@@ -90,6 +90,42 @@ let onFromJson = function() {
   }
 }
 
+let onDownload = function() {
+  try {
+    const list = Binary.value.split(',').filter(item => item.trim() !== '').map(item => Number(item.trim()));
+    const binary = new Uint8Array(list);
+    const blob = new Blob([binary], {type: "application/octet-stream"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "binary.bin";
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    throw(e);
+  }
+}
+
+let onUploadFileChanged = function() {
+  const file = UploadFile.files[0];
+  if (!file) {
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const binary = new Uint8Array(e.target.result);
+    Binary.value = '';
+    for (let i = 0; i < binary.length; ++i) {
+      Binary.value += '0x' + Number(binary[i]).toString(16).padStart(2, '0') + ', ';
+      if ((i + 1) % 8 === 0) {
+        Binary.value += '\n';
+      }
+    }
+    onBinaryChanged();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 let onBinaryChanged = function() {
   Binary.style.backgroundColor = kEditingColor;
   Syntax.style.backgroundColor = kOutdatedColor;
@@ -129,8 +165,10 @@ let main = function() {
 </p>
 <p>
   <button id="Parse" onclick="onParse();">Parse</button>
+  <button id="Download" onclick="onDownload();">Download</button>
+  <input type="file" id="UploadFile" style="display:none" onchange="onUploadFileChanged();">
+  <button id="Upload" onclick="UploadFile.click();">Upload</button>
 </p>
-</input>
 
 <h2>Syntax:</h2>
 <p>
